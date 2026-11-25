@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sarathys-word-battles",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2025-11-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/p/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "word-battles",
+      // Replace with the id printed by: npx wrangler d1 create word-battles
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // Public half of the VAPID key pair (run: npm run vapid). The private half is a secret.
+    "VAPID_PUBLIC_KEY": ""
+  },
+  "observability": { "enabled": true }
+}

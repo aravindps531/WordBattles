@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.log
+# Copyrighted word list, downloaded at build time (npm run words)
+public/words-v1.txt

@@ -1,0 +1,31 @@
+{
+  "name": "sarathys-word-battles",
+  "version": "1.0.0",
+  "description": "A family word game for 2-4 players, played across days.",
+  "scripts": {
+    "build": "vite build",
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply word-battles --local",
+    "db:migrate": "wrangler d1 migrations apply word-battles --remote",
+    "vapid": "node scripts/vapid.mjs",
+    "words": "node scripts/build-words.mjs",
+    "prebuild": "node scripts/build-words.mjs --if-missing",
+    "pretest": "node scripts/build-words.mjs --if-missing"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261125.1",
+    "@preact/preset-vite": "^2.10.6",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.6",
+    "vitest": "^5.1.2",
+    "wrangler": "^4.168.0"
+  },
+  "dependencies": {
+    "preact": "^11.2.0"
+  },
+  "private": true,
+  "type": "module"
+}
