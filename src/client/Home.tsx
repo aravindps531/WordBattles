@@ -37,7 +37,7 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
   }
   if (!data) return <div class="page"><p class="muted center">Loading...</p></div>;
 
-  const needsMe = (g: AnySummary) => g.myTurn || (g.kind === "chess" && (g.pending !== null || g.cpuTurn));
+  const needsMe = (g: AnySummary) => g.myTurn || !!g.unreadChat || (g.kind === "chess" && (g.pending !== null || g.cpuTurn));
   const active = data.games.filter((g) => g.status === "active");
   const mine = active.filter(needsMe);
   const waiting = active.filter((g) => !needsMe(g));
@@ -161,7 +161,7 @@ function Section({ title, games, token, meId }: { title: string; games: AnySumma
       <h2 class="section-title">{title}</h2>
       <ul class="games">
         {games.map((g) => (
-          <li key={g.id}>{g.kind === "chess" ? <ChessCard g={g} token={token} /> : <WordsCard g={g} token={token} meId={meId} />}</li>
+          <li key={g.id}>{g.kind === "chess" ? <ChessCard g={g} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
         ))}
       </ul>
     </section>
@@ -194,7 +194,7 @@ function ChessCard({ g, token }: { g: ChessSummary; token: string }) {
   );
 }
 
-function WordsCard({ g, token, meId }: { g: GameSummary; token: string; meId: string }) {
+function WordsCard({ g, token, meId }: { g: GameSummary & { unreadChat?: number }; token: string; meId: string }) {
   const others = g.players.filter((p) => p.id !== meId).map((p) => p.name);
   const turnPlayer = g.players[g.turn];
   return (
@@ -215,6 +215,7 @@ function WordsCard({ g, token, meId }: { g: GameSummary; token: string; meId: st
         ))}
       </div>
       {g.lastMove && <div class="gc-last muted small">{g.lastMove} &middot; {relTime(g.updatedAt)}</div>}
+      {!!g.unreadChat && <div class="gc-chat">{g.unreadChat} new message{g.unreadChat > 1 ? "s" : ""}</div>}
     </a>
   );
 }

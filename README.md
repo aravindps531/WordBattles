@@ -12,6 +12,7 @@ Private family games built to be played a few moves a day across time zones: **W
 - **Push notifications** when it's your turn; the board shows who is playing now and who is next, and highlights the last word played.
 - Any number of games can run at once. No time limits.
 - Works on phones and tablets; can be added to the home screen as an app.
+- **In-game chat** with emoji: each game has its own chat, with unread badges and a notification for new messages.
 
 ## Chess
 

@@ -31,7 +31,9 @@ export interface ChessSummary {
   pending: "draw" | "takeback" | null;
 }
 
-export type AnySummary = GameSummary | ChessSummary;
+export type AnySummary = (GameSummary | ChessSummary) & { unreadChat?: number };
+
+export interface ChatMessage { id: number; playerId: string; name: string; body: string; at: number }
 
 export interface MeResponse {
   me: { id: string; name: string };
@@ -96,6 +98,15 @@ export class Api {
     return this.req<ChessView>(`/api/chess/${id}/action`, {
       method: "POST", body: JSON.stringify({ version, action, uci }),
     });
+  }
+  chatMessages(gameId: string, after = 0) {
+    return this.req<{ messages: ChatMessage[]; lastReadId: number }>(`/api/games/${gameId}/chat?after=${after}`);
+  }
+  sendChat(gameId: string, text: string) {
+    return this.req<{ message: ChatMessage }>(`/api/games/${gameId}/chat`, { method: "POST", body: JSON.stringify({ text }) });
+  }
+  markChatRead(gameId: string, lastId: number) {
+    return this.req<{ ok: true }>(`/api/games/${gameId}/chat/read`, { method: "POST", body: JSON.stringify({ lastId }) });
   }
   subscribe(sub: PushSubscriptionJSON) {
     return this.req<{ ok: true }>("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub) });

@@ -3,6 +3,7 @@ import { BLANK, BOARD_SIZE, CENTER, PREMIUMS, RACK_SIZE, TILE_POINTS } from "../
 import type { Dictionary } from "../shared/dictionary";
 import { evaluatePlacement, MoveError, type GameView, type Move, type PlacedTile } from "../shared/engine";
 import { Api, ApiError } from "./api";
+import { ChatPanel, useChat } from "./Chat";
 import { loadDictionary } from "./words";
 
 interface RackItem { id: number; t: string }               // t is a letter or "?" for a blank
@@ -64,6 +65,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [dict, setDict] = useState<Dictionary | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [chatOpen, setChatOpen] = useState(() => new URLSearchParams(location.search).has("chat"));
   const versionRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
@@ -110,6 +112,8 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
 
   const mySeat = view?.mySeat ?? null;
   const myTurn = !!view && view.status === "active" && view.turn === mySeat;
+  const meId = view && mySeat !== null ? view.seats[mySeat].id : null;
+  const chat = useChat(api, gameId, meId, chatOpen);
   const lastMove = view?.moves[view.moves.length - 1];
   const lastPlay = useMemo(() => {
     if (!view) return null;
@@ -276,8 +280,21 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
     <div class="game">
       <header class="game-top">
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
-        <span class="bag" title="Tiles left in the bag">Bag: <b>{view.bagCount}</b></span>
+        <span class="top-right">
+          <span class="bag" title="Tiles left in the bag">Bag: <b>{view.bagCount}</b></span>
+          <button class="btn chat-btn" onClick={() => setChatOpen(true)}
+            aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
+            Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
+          </button>
+        </span>
       </header>
+
+      {chatOpen && (
+        <ChatPanel messages={chat.messages} meId={meId} onSend={chat.send} onClose={() => {
+          setChatOpen(false);
+          if (location.search) history.replaceState(null, "", location.pathname);
+        }} />
+      )}
 
       <TurnBanner view={view} myTurn={myTurn} turnName={turnName} nextName={nextName} winners={winners} mySeat={mySeat} />
 

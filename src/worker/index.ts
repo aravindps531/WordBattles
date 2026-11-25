@@ -252,10 +252,19 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     ).bind(me.id).all<GameRow>();
     const others = await env.DB.prepare("SELECT id, name FROM players WHERE id != ? ORDER BY name")
       .bind(me.id).all<{ id: string; name: string }>();
+    const unread = await env.DB.prepare(
+      `SELECT m.game_id AS game_id, COUNT(*) AS n
+         FROM chat_messages m
+         JOIN game_players gp ON gp.game_id = m.game_id AND gp.player_id = ?1
+         LEFT JOIN chat_reads r ON r.game_id = m.game_id AND r.player_id = ?1
+        WHERE m.player_id != ?1 AND m.id > COALESCE(r.last_read_id, 0)
+        GROUP BY m.game_id`,
+    ).bind(me.id).all<{ game_id: string; n: number }>();
+    const unreadBy = new Map(unread.results.map((u) => [u.game_id, u.n]));
     return json({
       me: { id: me.id, name: me.name },
       family: others.results,
-      games: results.map((r) => summary(r, me.id)),
+      games: results.map((r) => ({ ...summary(r, me.id), unreadChat: unreadBy.get(r.id) ?? 0 })),
     });
   }
 
@@ -355,6 +364,9 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     return json(viewFor(g, me.id, row.id, row.version + 1));
   }
 
+  m = /^\/api\/games\/([\w-]+)\/chat(\/read)?$/.exec(path);
+  if (m) return handleChat(req, env, ctx, url, me, m[1], !!m[2]);
+
   if (path.startsWith("/api/chess")) return handleChess(req, env, ctx, url, me);
 
   // Lets the client preview words without shipping the full list (fallback path).
@@ -389,6 +401,79 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
   }
 
   throw new HttpError(404, "Not found.");
+}
+
+// ------------------------------------------------------------------ chat
+
+const CHAT_MAX_LENGTH = 500;
+const CHAT_PAGE = 200;
+
+interface ChatRow { id: number; player_id: string; name: string; body: string; created_at: number }
+
+async function handleChat(
+  req: Request, env: Env, ctx: ExecutionContext, url: URL, me: Player, gameId: string, isRead: boolean,
+): Promise<Response> {
+  const member = await env.DB.prepare("SELECT 1 AS ok FROM game_players WHERE game_id = ? AND player_id = ?")
+    .bind(gameId, me.id).first<{ ok: number }>();
+  if (!member) throw new HttpError(403, "You are not in this game.");
+  const toMsg = (r: ChatRow) => ({ id: r.id, playerId: r.player_id, name: r.name, body: r.body, at: r.created_at });
+
+  if (isRead && req.method === "POST") {
+    const { lastId } = await body<{ lastId?: number }>(req);
+    const id = Math.max(0, Math.floor(Number(lastId) || 0));
+    await env.DB.prepare(
+      `INSERT INTO chat_reads (game_id, player_id, last_read_id) VALUES (?, ?, ?)
+       ON CONFLICT(game_id, player_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)`,
+    ).bind(gameId, me.id, id).run();
+    return json({ ok: true });
+  }
+
+  if (!isRead && req.method === "GET") {
+    const after = Math.max(0, Math.floor(Number(url.searchParams.get("after")) || 0));
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM (
+         SELECT m.id, m.player_id, p.name, m.body, m.created_at
+           FROM chat_messages m JOIN players p ON p.id = m.player_id
+          WHERE m.game_id = ? AND m.id > ?
+          ORDER BY m.id DESC LIMIT ${CHAT_PAGE}
+       ) ORDER BY id`,
+    ).bind(gameId, after).all<ChatRow>();
+    const read = await env.DB.prepare("SELECT last_read_id FROM chat_reads WHERE game_id = ? AND player_id = ?")
+      .bind(gameId, me.id).first<{ last_read_id: number }>();
+    return json({ messages: results.map(toMsg), lastReadId: read?.last_read_id ?? 0 });
+  }
+
+  if (!isRead && req.method === "POST") {
+    const { text } = await body<{ text?: string }>(req);
+    const clean = String(text ?? "").replace(/\r\n?/g, "\n").trim();
+    if (!clean) throw new HttpError(400, "Type a message first.");
+    if (clean.length > CHAT_MAX_LENGTH) throw new HttpError(400, `Messages can be up to ${CHAT_MAX_LENGTH} characters.`);
+    const now = Date.now();
+    const row = await env.DB.prepare(
+      "INSERT INTO chat_messages (game_id, player_id, body, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+    ).bind(gameId, me.id, clean, now).first<{ id: number }>();
+    const id = row!.id;
+    await env.DB.prepare(
+      `INSERT INTO chat_reads (game_id, player_id, last_read_id) VALUES (?, ?, ?)
+       ON CONFLICT(game_id, player_id) DO UPDATE SET last_read_id = MAX(last_read_id, excluded.last_read_id)`,
+    ).bind(gameId, me.id, id).run();
+
+    const { results: others } = await env.DB.prepare(
+      "SELECT player_id FROM game_players WHERE game_id = ? AND player_id != ?",
+    ).bind(gameId, me.id).all<{ player_id: string }>();
+    const kind = await env.DB.prepare("SELECT kind FROM games WHERE id = ?").bind(gameId).first<{ kind: string }>();
+    const seg = kind?.kind === "chess" ? "c" : "g";
+    const preview = clean.length > 140 ? `${clean.slice(0, 137)}...` : clean;
+    ctx.waitUntil(notify(env, url.origin, others.map((o) => o.player_id), (p) => ({
+      title: `${me.name} (${kind?.kind === "chess" ? "Chess" : "Word Battles"} chat)`,
+      body: preview,
+      url: `/p/${p.token}/${seg}/${gameId}?chat=1`,
+      tag: `chat-${gameId}`,
+    })));
+    return json({ message: { id, playerId: me.id, name: me.name, body: clean, at: now } }, 201);
+  }
+
+  throw new HttpError(405, "Method not allowed.");
 }
 
 // ------------------------------------------------------------------ chess
