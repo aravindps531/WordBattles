@@ -59,7 +59,7 @@ Wrangler prints the site address, e.g. `https://sarathys-word-battles.<your-subd
 ### Add the family
 
 1. Open `https://<your-site>/admin` and enter the admin key.
-2. Add each person (e.g. Aravind, Amma, Akka).
+2. Add each person (e.g. Aravind, PViji, Anitha).
 3. Use **Send on WhatsApp** to send each person their own link.
 
 ### What each person does once

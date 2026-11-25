@@ -63,7 +63,7 @@ export function AdminPage() {
           <section class="card">
             <h2>Add a player</h2>
             <form class="row" onSubmit={add}>
-              <input placeholder="Name, e.g. Amma" value={name} maxLength={30}
+              <input placeholder="Name, e.g. PViji" value={name} maxLength={30}
                 onInput={(e) => setName((e.target as HTMLInputElement).value)} />
               <button class="btn primary" disabled={!name.trim()}>Add</button>
             </form>
