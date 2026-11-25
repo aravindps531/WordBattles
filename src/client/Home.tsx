@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { Api, type AnySummary, type ChessSummary, type GameSummary, type MeResponse } from "./api";
+import { Api, type AnySummary, type ChessSummary, type GameSummary, type GoSummary, type MeResponse } from "./api";
 import { enablePush, isIOS, isStandalone, pushState, syncSubscription, type PushState } from "./push";
 
 function relTime(ts: number): string {
@@ -37,7 +37,8 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
   }
   if (!data) return <div class="page"><p class="muted center">Loading...</p></div>;
 
-  const needsMe = (g: AnySummary) => g.myTurn || !!g.unreadChat || (g.kind === "chess" && (g.pending !== null || g.cpuTurn));
+  const needsMe = (g: AnySummary) => g.myTurn || !!g.unreadChat
+    || (g.kind === "chess" && (g.pending !== null || g.cpuTurn)) || (g.kind === "go" && g.pending !== null);
   const active = data.games.filter((g) => g.status === "active");
   const mine = active.filter(needsMe);
   const waiting = active.filter((g) => !needsMe(g));
@@ -67,7 +68,10 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
 }
 
 function NewGame({ api, token, family }: { api: Api; token: string; family: { id: string; name: string }[] }) {
-  const [kind, setKind] = useState<"words" | "chess">("words");
+  const [kind, setKind] = useState<"words" | "chess" | "go">("words");
+  const [goSize, setGoSize] = useState<9 | 13>(9);
+  const [handicap, setHandicap] = useState(0);
+  const [goColor, setGoColor] = useState<"random" | "b" | "w">("random");
   const [picking, setPicking] = useState<Set<string>>(new Set());
   const [opponent, setOpponent] = useState<string>("");
   const [level, setLevel] = useState(3);
@@ -91,12 +95,25 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
     } catch (e) { alert((e as Error).message); setCreating(false); }
   };
 
+  const startGo = async () => {
+    setCreating(true);
+    try {
+      const { id } = await api.createGo({
+        opponentId: opponent, size: goSize, handicap,
+        color: goColor,
+      });
+      location.href = `/p/${token}/go/${id}`;
+    } catch (e) { alert((e as Error).message); setCreating(false); }
+  };
+  const maxHandicap = goSize === 9 ? 5 : 9;
+
   return (
     <section class="card">
       <h2>Start a new game</h2>
       <div class="tabs" role="tablist">
         <button role="tab" aria-selected={kind === "words"} class={`tab ${kind === "words" ? "on" : ""}`} onClick={() => setKind("words")}>Word Battles</button>
-        <button role="tab" aria-selected={kind === "chess"} class={`tab ${kind === "chess" ? "on" : ""}`} onClick={() => setKind("chess")}>Chess</button>
+        <button role="tab" aria-selected={kind === "chess"} class={`tab ${kind === "chess" ? "on" : ""}`} onClick={() => { setKind("chess"); }}>Chess</button>
+        <button role="tab" aria-selected={kind === "go"} class={`tab ${kind === "go" ? "on" : ""}`} onClick={() => { setKind("go"); if (opponent === "cpu") setOpponent(""); }}>Go</button>
       </div>
 
       {kind === "words" ? (
@@ -114,6 +131,51 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
             </div>
             <button class="btn primary wide" disabled={picking.size === 0 || creating} onClick={startWords}>
               {creating ? "Starting..." : `Start Word Battle${picking.size ? ` with ${picking.size + 1} players` : ""}`}
+            </button>
+          </>
+        )
+      ) : kind === "go" ? (
+        family.length === 0 ? <p class="muted">No other players yet. Add them on the admin page.</p> : (
+          <>
+            <p class="muted small">Play against</p>
+            <div class="pick">
+              {family.map((p) => (
+                <label key={p.id} class={`chip ${opponent === p.id ? "on" : ""}`}>
+                  <input type="radio" name="gopp" checked={opponent === p.id} onChange={() => setOpponent(p.id)} />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+            <p class="muted small">Board size</p>
+            <div class="pick">
+              {([9, 13] as const).map((sz) => (
+                <label key={sz} class={`chip ${goSize === sz ? "on" : ""}`}>
+                  <input type="radio" name="gsize" checked={goSize === sz} onChange={() => { setGoSize(sz); setHandicap((h) => Math.min(h, sz === 9 ? 5 : 9)); }} />
+                  {sz}&times;{sz}
+                </label>
+              ))}
+            </div>
+            <p class="muted small">Handicap (extra stones for Black, the less experienced player)</p>
+            <div class="pick">
+              {[0, ...Array.from({ length: maxHandicap - 1 }, (_, i) => i + 2)].map((h) => (
+                <label key={h} class={`chip ${handicap === h ? "on" : ""}`}>
+                  <input type="radio" name="ghc" checked={handicap === h} onChange={() => setHandicap(h)} />
+                  {h === 0 ? "None" : h}
+                </label>
+              ))}
+            </div>
+            <p class="muted small">Your stones</p>
+            <div class="pick">
+              {([["random", "Random"], ["b", "Black"], ["w", "White"]] as const).map(([v, label]) => (
+                <label key={v} class={`chip ${goColor === v ? "on" : ""}`}>
+                  <input type="radio" name="gcolor" checked={goColor === v} onChange={() => setGoColor(v)} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {handicap > 0 && goColor === "random" && <p class="muted small">Tip: with a handicap, choose who plays Black instead of Random.</p>}
+            <button class="btn primary wide" disabled={!opponent || opponent === "cpu" || creating} onClick={startGo}>
+              {creating ? "Starting..." : `Start ${goSize}x${goSize} Go game`}
             </button>
           </>
         )
@@ -161,10 +223,33 @@ function Section({ title, games, token, meId }: { title: string; games: AnySumma
       <h2 class="section-title">{title}</h2>
       <ul class="games">
         {games.map((g) => (
-          <li key={g.id}>{g.kind === "chess" ? <ChessCard g={g as ChessSummary & { unreadChat?: number }} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
+          <li key={g.id}>{g.kind === "go" ? <GoCard g={g as GoSummary & { unreadChat?: number }} token={token} /> : g.kind === "chess" ? <ChessCard g={g as ChessSummary & { unreadChat?: number }} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
         ))}
       </ul>
     </section>
+  );
+}
+
+function GoCard({ g, token }: { g: GoSummary & { unreadChat?: number }; token: string }) {
+  const attention = g.myTurn || g.pending !== null;
+  const status = g.status === "finished" ? (g.winnerIsMe ? "You won" : `${g.opponent} won`)
+    : g.pending === "takeback" ? "Takeback asked"
+    : g.phase === "scoring" ? (g.myTurn ? "Count & accept" : "Counting")
+    : g.myTurn ? "Your move" : `${g.turnName}'s move`;
+  return (
+    <a class={`game-card ${attention ? "mine" : ""}`} href={`/p/${token}/go/${g.id}`}>
+      <div class="gc-head">
+        <span class="gc-title"><span class="kind-icon go-icon" aria-hidden="true" /> Go vs {g.opponent}</span>
+        <span class={`gc-status ${attention && g.status === "active" ? "mine" : ""}`}>{status}</span>
+      </div>
+      <div class="gc-scores">
+        <span>You play <b>{g.myColor === "b" ? "Black" : "White"}</b></span>
+        <span>{g.size}&times;{g.size}</span>
+        <span>Move {g.moveNumber}</span>
+      </div>
+      {(g.endText || g.lastMove) && <div class="gc-last muted small">{g.endText ?? g.lastMove} &middot; {relTime(g.updatedAt)}</div>}
+      {!!g.unreadChat && <div class="gc-chat">{g.unreadChat} new message{g.unreadChat > 1 ? "s" : ""}</div>}
+    </a>
   );
 }
 

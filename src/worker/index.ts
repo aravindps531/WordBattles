@@ -8,6 +8,7 @@ import {
   CPU_LEVELS, describeChessEnd, isCpu, offerDraw, other, requestTakeback, resign, sideId, sideOf,
   turnOf, type ChessState, type Color, type Side,
 } from "../shared/chess";
+import * as Go from "../shared/go";
 import { sendPush, type VapidKeys } from "./webpush";
 
 export interface Env {
@@ -159,9 +160,38 @@ function chessSummary(row: GameRow, g: ChessState, playerId: string) {
   };
 }
 
+function goSummary(row: GameRow, g: Go.GoState, playerId: string) {
+  const mine = Go.colorOf(g, playerId);
+  const turn = Go.turnOf(g);
+  const opp = mine ? Go.playerOf(g, Go.other(mine)) : g.white;
+  const last = g.moves[g.moves.length - 1];
+  const lastText = last
+    ? `${Go.playerOf(g, last.color).name} ${last.point === null ? "passed" : `played ${Go.pointName(g.size, last.point)}`}`
+    : null;
+  const needsMe = g.phase === "play" ? turn === mine : g.phase === "scoring" ? !!mine && !g.accepted.includes(mine) : false;
+  return {
+    id: row.id,
+    kind: "go" as const,
+    status: g.phase === "finished" ? "finished" as const : "active" as const,
+    updatedAt: row.updated_at,
+    opponent: opp.name,
+    myColor: mine,
+    size: g.size,
+    phase: g.phase,
+    myTurn: needsMe,
+    turnName: Go.playerOf(g, turn).name,
+    moveNumber: g.moves.length + 1,
+    lastMove: lastText,
+    winnerIsMe: g.result ? g.result.winner === mine : null,
+    endText: g.phase === "finished" ? Go.describeGoEnd(g) : null,
+    pending: g.takeback && g.takeback !== mine ? "takeback" : null,
+  };
+}
+
 function summary(row: GameRow, playerId: string) {
-  const parsed = JSON.parse(row.state) as GameState | ChessState;
+  const parsed = JSON.parse(row.state) as GameState | ChessState | Go.GoState;
   if ((parsed as ChessState).kind === "chess") return chessSummary(row, parsed as ChessState, playerId);
+  if ((parsed as Go.GoState).kind === "go") return goSummary(row, parsed as Go.GoState, playerId);
   const g = parsed as GameState;
   const last = g.moves[g.moves.length - 1];
   const mySeat = g.seats.indexOf(playerId);
@@ -302,7 +332,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     const since = url.searchParams.get("since");
     if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
     const g = JSON.parse(row.state) as GameState;
-    if ((g as unknown as ChessState).kind === "chess") throw new HttpError(404, "Game not found.");
+    if ((g as unknown as { kind?: string }).kind) throw new HttpError(404, "Game not found.");
     if (!g.seats.includes(me.id)) throw new HttpError(403, "You are not in this game.");
     return json(viewFor(g, me.id, row.id, row.version));
   }
@@ -315,7 +345,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     }>(req);
     const row = await loadGame(env, m[1]);
     const g = JSON.parse(row.state) as GameState;
-    if ((g as unknown as ChessState).kind === "chess") throw new HttpError(404, "Game not found.");
+    if ((g as unknown as { kind?: string }).kind) throw new HttpError(404, "Game not found.");
     const seat = g.seats.indexOf(me.id);
     if (seat < 0) throw new HttpError(403, "You are not in this game.");
     if (typeof input.version === "number" && input.version !== row.version) {
@@ -368,6 +398,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
   if (m) return handleChat(req, env, ctx, url, me, m[1], !!m[2]);
 
   if (path.startsWith("/api/chess")) return handleChess(req, env, ctx, url, me);
+  if (path === "/api/go" || path.startsWith("/api/go/")) return handleGo(req, env, ctx, url, me);
 
   // Lets the client preview words without shipping the full list (fallback path).
   if (path === "/api/words/check" && method === "POST") {
@@ -462,10 +493,11 @@ async function handleChat(
       "SELECT player_id FROM game_players WHERE game_id = ? AND player_id != ?",
     ).bind(gameId, me.id).all<{ player_id: string }>();
     const kind = await env.DB.prepare("SELECT kind FROM games WHERE id = ?").bind(gameId).first<{ kind: string }>();
-    const seg = kind?.kind === "chess" ? "c" : "g";
+    const seg = kind?.kind === "chess" ? "c" : kind?.kind === "go" ? "go" : "g";
+    const label = kind?.kind === "chess" ? "Chess" : kind?.kind === "go" ? "Go" : "Word Battles";
     const preview = clean.length > 140 ? `${clean.slice(0, 137)}...` : clean;
     ctx.waitUntil(notify(env, url.origin, others.map((o) => o.player_id), (p) => ({
-      title: `${me.name} (${kind?.kind === "chess" ? "Chess" : "Word Battles"} chat)`,
+      title: `${me.name} (${label} chat)`,
       body: preview,
       url: `/p/${p.token}/${seg}/${gameId}?chat=1`,
       tag: `chat-${gameId}`,
@@ -610,6 +642,125 @@ async function handleChess(req: Request, env: Env, ctx: ExecutionContext, url: U
   throw new HttpError(404, "Not found.");
 }
 
+// ------------------------------------------------------------------ go
+
+async function handleGo(req: Request, env: Env, ctx: ExecutionContext, url: URL, me: Player): Promise<Response> {
+  const path = url.pathname;
+  const method = req.method;
+  const origin = url.origin;
+
+  if (path === "/api/go" && method === "POST") {
+    const input = await body<{ opponentId?: string; size?: number; handicap?: number; color?: "b" | "w" | "random" }>(req);
+    if (!input.opponentId || input.opponentId === me.id) throw new HttpError(400, "Pick an opponent.");
+    const opp = await env.DB.prepare("SELECT id, name FROM players WHERE id = ?").bind(input.opponentId)
+      .first<{ id: string; name: string }>();
+    if (!opp) throw new HttpError(400, "Unknown player.");
+    const size = Number(input.size) as Go.GoSize;
+    const handicap = Number(input.handicap ?? 0);
+    // With a handicap, the person who set it up takes the colour they chose (Black receives the stones).
+    const myColor: Go.GoColor = input.color === "b" || input.color === "w" ? input.color : rng(2) === 0 ? "b" : "w";
+    const mine = { id: me.id, name: me.name };
+    const g = Go.createGoGame(myColor === "b" ? mine : opp, myColor === "b" ? opp : mine, size, handicap);
+    const id = randomId(8);
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO games (id, state, version, status, created_by, created_at, updated_at, kind) VALUES (?, ?, 0, 'active', ?, ?, ?, 'go')")
+        .bind(id, JSON.stringify(g), me.id, now, now),
+      env.DB.prepare("INSERT INTO game_players (game_id, player_id, seat) VALUES (?, ?, 0)").bind(id, g.black.id),
+      env.DB.prepare("INSERT INTO game_players (game_id, player_id, seat) VALUES (?, ?, 1)").bind(id, g.white.id),
+    ]);
+    const oppColor = Go.other(myColor);
+    const first = Go.turnOf(g);
+    ctx.waitUntil(notify(env, origin, [opp.id], (p) => ({
+      title: `New Go game with ${me.name}`,
+      body: `${size}x${size}${handicap ? `, ${handicap} handicap stones` : ""}. You play ${oppColor === "b" ? "Black" : "White"}${first === oppColor ? ", and it's your move." : "."}`,
+      url: `/p/${p.token}/go/${id}`,
+      tag: `go-${id}`,
+    })));
+    return json({ id }, 201);
+  }
+
+  let m = /^\/api\/go\/([\w-]+)$/.exec(path);
+  if (m && method === "GET") {
+    const row = await loadGame(env, m[1]);
+    const since = url.searchParams.get("since");
+    if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
+    const g = JSON.parse(row.state) as Go.GoState;
+    if (g.kind !== "go") throw new HttpError(404, "Game not found.");
+    if (!Go.colorOf(g, me.id)) throw new HttpError(403, "You are not in this game.");
+    return json(Go.goViewFor(g, me.id, row.id, row.version));
+  }
+
+  m = /^\/api\/go\/([\w-]+)\/action$/.exec(path);
+  if (m && method === "POST") {
+    const input = await body<{ version?: number; action?: string; point?: number }>(req);
+    const row = await loadGame(env, m[1]);
+    const g = JSON.parse(row.state) as Go.GoState;
+    if (g.kind !== "go") throw new HttpError(404, "Game not found.");
+    const color = Go.colorOf(g, me.id);
+    if (!color) throw new HttpError(403, "You are not in this game.");
+    if (typeof input.version === "number" && input.version !== row.version) {
+      throw new HttpError(409, "The game changed since you loaded it. Refreshing...");
+    }
+    const opp = Go.playerOf(g, Go.other(color));
+    let note: { title: string; body: string } | null = null;
+    switch (input.action) {
+      case "play": {
+        const mv = Go.playStone(g, color, Number(input.point));
+        note = { title: `Your move vs ${me.name} (Go)`, body: `${me.name} played ${Go.pointName(g.size, mv.point!)}${mv.captured ? `, capturing ${mv.captured}` : ""}.` };
+        break;
+      }
+      case "pass":
+        Go.pass(g, color);
+        note = g.phase === "scoring"
+          ? { title: `Go with ${me.name}: time to count`, body: "Both of you passed. Mark any dead stones, then accept the score." }
+          : { title: `Your move vs ${me.name} (Go)`, body: `${me.name} passed. If you pass too, the game is counted.` };
+        break;
+      case "resign": Go.resign(g, color); break;
+      case "takeback":
+        Go.requestTakeback(g, color);
+        note = { title: `${me.name} asks to take back a move`, body: "Open the Go game to allow or refuse." };
+        break;
+      case "accept-takeback":
+        Go.answerTakeback(g, color, true);
+        note = { title: `${me.name} allowed your takeback`, body: "It's your move again." };
+        break;
+      case "decline-takeback":
+        Go.answerTakeback(g, color, false);
+        note = { title: `${me.name} refused the takeback`, body: "It's still their move." };
+        break;
+      case "toggle-dead":
+        Go.toggleDead(g, Number(input.point));
+        note = { title: `${me.name} changed the dead stones`, body: "Check the count in your Go game and accept it, or resume play." };
+        break;
+      case "accept-score":
+        Go.acceptScore(g, color);
+        if (g.phase !== "finished") note = { title: `${me.name} accepted the count`, body: "Accept it too to finish the game, or resume play." };
+        break;
+      case "resume":
+        Go.resumePlay(g, color);
+        note = { title: `${me.name} resumed the Go game`, body: "Play continues until you both pass again." };
+        break;
+      default:
+        throw new HttpError(400, "Unknown action.");
+    }
+    const now = Date.now();
+    const status = g.phase === "finished" ? "finished" : "active";
+    const res = await env.DB.prepare(
+      "UPDATE games SET state = ?, version = version + 1, status = ?, updated_at = ? WHERE id = ? AND version = ?",
+    ).bind(JSON.stringify(g), status, now, row.id, row.version).run();
+    if (!res.meta.changes) throw new HttpError(409, "The game changed at the same time. Refreshing...");
+    if (g.phase === "finished") note = { title: `Go with ${me.name}: game over`, body: Go.describeGoEnd(g) };
+    if (note) {
+      const n = note;
+      ctx.waitUntil(notify(env, origin, [opp.id], (p) => ({ ...n, url: `/p/${p.token}/go/${row.id}`, tag: `go-${row.id}` })));
+    }
+    return json(Go.goViewFor(g, me.id, row.id, row.version + 1));
+  }
+
+  throw new HttpError(404, "Not found.");
+}
+
 /** Serves the app shell for personal links, pointing at a per-player manifest
  *  so "Add to Home Screen" opens straight into that person's link. */
 async function serveShell(req: Request, env: Env, token: string): Promise<Response> {
@@ -634,7 +785,7 @@ export default {
       return env.ASSETS.fetch(req);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status);
-      if (e instanceof MoveError || e instanceof ChessError) return json({ error: e.message }, 422);
+      if (e instanceof MoveError || e instanceof ChessError || e instanceof Go.GoError) return json({ error: e.message }, 422);
       console.error(e);
       return json({ error: "Something went wrong. Please try again." }, 500);
     }

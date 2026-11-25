@@ -1,6 +1,6 @@
 # Sarathys' Game Room
 
-Private family games built to be played a few moves a day across time zones: **Word Battles** (2 to 4 players) and **Chess** (against family or the computer).
+Private family games built to be played a few moves a day across time zones: **Word Battles** (2 to 4 players), **Chess** (against family or the computer) and **Go**.
 
 ## Word Battles
 
@@ -13,6 +13,14 @@ Private family games built to be played a few moves a day across time zones: **W
 - Any number of games can run at once. No time limits.
 - Works on phones and tablets; can be added to the home screen as an app.
 - **In-game chat** with emoji (Word Battles and Chess games between people): each game has its own chat, with unread badges and a notification for new messages.
+
+## Go
+
+- 9x9 and 13x13 boards; area (Chinese) scoring with 7.5 komi; positional superko.
+- Handicap of 2 to 5 stones (9x9) or 2 to 9 (13x13), with 0.5 komi.
+- After two passes, both players mark dead groups (the score updates live) and accept, or resume play.
+- Move confirmation, optional beginner hints (stones that can be captured next move), takebacks with consent, move replay, chat.
+- No computer opponent yet.
 
 ## Chess
 

@@ -1,5 +1,6 @@
 import type { GameView, PlacedTile } from "../shared/engine";
 import type { ChessView, Color } from "../shared/chess";
+import type { GoColor, GoView } from "../shared/go";
 
 export interface GameSummary {
   kind: "words";
@@ -31,7 +32,29 @@ export interface ChessSummary {
   pending: "draw" | "takeback" | null;
 }
 
-export type AnySummary = (GameSummary | ChessSummary) & { unreadChat?: number };
+export interface GoSummary {
+  kind: "go";
+  id: string;
+  status: "active" | "finished";
+  updatedAt: number;
+  opponent: string;
+  myColor: GoColor | null;
+  size: number;
+  phase: "play" | "scoring" | "finished";
+  myTurn: boolean;
+  turnName: string;
+  moveNumber: number;
+  lastMove: string | null;
+  winnerIsMe: boolean | null;
+  endText: string | null;
+  pending: "takeback" | null;
+}
+
+export type GoAction =
+  | "play" | "pass" | "resign" | "takeback" | "accept-takeback" | "decline-takeback"
+  | "toggle-dead" | "accept-score" | "resume";
+
+export type AnySummary = (GameSummary | ChessSummary | GoSummary) & { unreadChat?: number };
 
 export interface ChatMessage { id: number; playerId: string; name: string; body: string; at: number }
 
@@ -98,6 +121,15 @@ export class Api {
     return this.req<ChessView>(`/api/chess/${id}/action`, {
       method: "POST", body: JSON.stringify({ version, action, uci }),
     });
+  }
+  createGo(opts: { opponentId: string; size: number; handicap: number; color: "b" | "w" | "random" }) {
+    return this.req<{ id: string }>("/api/go", { method: "POST", body: JSON.stringify(opts) });
+  }
+  go(id: string, since?: number) {
+    return this.req<GoView | { unchanged: true; version: number }>(`/api/go/${id}${since !== undefined ? `?since=${since}` : ""}`);
+  }
+  goAction(id: string, version: number, action: GoAction, point?: number) {
+    return this.req<GoView>(`/api/go/${id}/action`, { method: "POST", body: JSON.stringify({ version, action, point }) });
   }
   chatMessages(gameId: string, after = 0) {
     return this.req<{ messages: ChatMessage[]; lastReadId: number }>(`/api/games/${gameId}/chat?after=${after}`);
