@@ -161,14 +161,14 @@ function Section({ title, games, token, meId }: { title: string; games: AnySumma
       <h2 class="section-title">{title}</h2>
       <ul class="games">
         {games.map((g) => (
-          <li key={g.id}>{g.kind === "chess" ? <ChessCard g={g} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
+          <li key={g.id}>{g.kind === "chess" ? <ChessCard g={g as ChessSummary & { unreadChat?: number }} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
         ))}
       </ul>
     </section>
   );
 }
 
-function ChessCard({ g, token }: { g: ChessSummary; token: string }) {
+function ChessCard({ g, token }: { g: ChessSummary & { unreadChat?: number }; token: string }) {
   const attention = g.myTurn || g.pending !== null || g.cpuTurn;
   const status = g.status === "finished"
     ? (g.result === "1/2-1/2" ? "Draw" : (g.result === "1-0") === (g.myColor === "w") ? "You won" : `${g.opponent} won`)
@@ -190,6 +190,7 @@ function ChessCard({ g, token }: { g: ChessSummary; token: string }) {
       {(g.endText || g.lastMove) && (
         <div class="gc-last muted small">{g.endText ?? g.lastMove} &middot; {relTime(g.updatedAt)}</div>
       )}
+      {!!g.unreadChat && <div class="gc-chat">{g.unreadChat} new message{g.unreadChat > 1 ? "s" : ""}</div>}
     </a>
   );
 }

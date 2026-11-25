@@ -2,6 +2,7 @@ import { Chess, type Square } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { describeChessEnd, isCpu, other, type ChessView, type Color } from "../shared/chess";
 import { Api, type ApiError, type ChessAction } from "./api";
+import { ChatPanel, useChat } from "./Chat";
 import { getEngine, levelOptions, winChance } from "./engine";
 
 const POLL_MS = 15000;
@@ -145,6 +146,10 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
   const live = ply === null;
   const myTurn = !!view && view.status === "active" && view.turn === my;
   const cpuTurn = !!view && view.status === "active" && vsCpu && view.turn === opp;
+  const mySide = view ? (my === "w" ? view.white : view.black) : null;
+  const meId = mySide && !isCpu(mySide) ? mySide.id : null;
+  const [chatOpen, setChatOpen] = useState(() => new URLSearchParams(location.search).has("chat"));
+  const chat = useChat(api, gameId, meId, chatOpen && !vsCpu);
 
   // Let the computer move when it's its turn.
   useEffect(() => {
@@ -309,8 +314,23 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
     <div class="game chess">
       <header class="game-top">
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
-        <span class="muted small">Chess &middot; move {Math.floor(view.moves.length / 2) + 1}</span>
+        <span class="top-right">
+          <span class="muted small">Move {Math.floor(view.moves.length / 2) + 1}</span>
+          {!vsCpu && (
+            <button class="btn chat-btn" onClick={() => setChatOpen(true)}
+              aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
+              Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
+            </button>
+          )}
+        </span>
       </header>
+
+      {chatOpen && !vsCpu && (
+        <ChatPanel messages={chat.messages} meId={meId} onSend={chat.send} onClose={() => {
+          setChatOpen(false);
+          if (location.search) history.replaceState(null, "", location.pathname);
+        }} />
+      )}
 
       {view.status === "finished" ? (
         <div class={`banner done ${youWon ? "won" : ""}`}>
