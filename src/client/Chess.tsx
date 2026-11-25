@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { describeChessEnd, isCpu, other, type ChessView, type Color } from "../shared/chess";
 import { Api, type ApiError, type ChessAction } from "./api";
 import { ChatPanel, useChat } from "./Chat";
+import { ChessHowTo, HowToButton, HowToPanel, useHowTo } from "./HowTo";
 import { getEngine, levelOptions, winChance } from "./engine";
 
 const POLL_MS = 15000;
@@ -150,6 +151,7 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
   const meId = mySide && !isCpu(mySide) ? mySide.id : null;
   const [chatOpen, setChatOpen] = useState(() => new URLSearchParams(location.search).has("chat"));
   const chat = useChat(api, gameId, meId, chatOpen && !vsCpu);
+  const howTo = useHowTo("chess");
 
   // Let the computer move when it's its turn.
   useEffect(() => {
@@ -316,6 +318,7 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
         <span class="top-right">
           <span class="muted small">Move {Math.floor(view.moves.length / 2) + 1}</span>
+          <HowToButton onClick={howTo.show} />
           {!vsCpu && (
             <button class="btn chat-btn" onClick={() => setChatOpen(true)}
               aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
@@ -325,6 +328,7 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
         </span>
       </header>
 
+      {howTo.open && <HowToPanel k="chess" title="Chess" onClose={howTo.close}><ChessHowTo /></HowToPanel>}
       {chatOpen && !vsCpu && (
         <ChatPanel messages={chat.messages} meId={meId} onSend={chat.send} onClose={() => {
           setChatOpen(false);

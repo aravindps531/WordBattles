@@ -1,6 +1,6 @@
 # Sarathys' Game Room
 
-Private family games built to be played a few moves a day across time zones: **Word Battles** (2 to 4 players), **Chess** (against family or the computer) and **Go**.
+Private family games built to be played a few moves a day across time zones: **Word Battles** (2 to 4 players), **Chess** (against family or the computer), **Go** and **Sea Battle**. Each game has a "How to play" guide that opens the first time (players can hide it; the ? button brings it back).
 
 ## Word Battles
 
@@ -21,6 +21,14 @@ Private family games built to be played a few moves a day across time zones: **W
 - After two passes, both players mark dead groups (the score updates live) and accept, or resume play.
 - Move confirmation, optional beginner hints (stones that can be captured next move), takebacks with consent, move replay, chat.
 - No computer opponent yet.
+
+## Sea Battle
+
+- Classic naval game with the **Salvo** rule: one shot per ship still afloat, fired all at once.
+- 10x10 with 5 ships, or an 8x8 quick game with 4. Ships may touch. Tap-to-place, tap to rotate, or Random fleet.
+- Sinks are announced. Equal turns: if the first player sinks everything, the second gets a last salvo (both sunk = draw).
+- Play family or the computer (Easy: random with follow-up; Smart: probability hunting). Computer turns run instantly on the server.
+- Ship positions never leave the server until the game ends.
 
 ## Chess
 

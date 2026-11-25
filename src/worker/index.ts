@@ -9,6 +9,7 @@ import {
   turnOf, type ChessState, type Color, type Side,
 } from "../shared/chess";
 import * as Go from "../shared/go";
+import * as Sea from "../shared/seabattle";
 import { sendPush, type VapidKeys } from "./webpush";
 
 export interface Env {
@@ -188,8 +189,36 @@ function goSummary(row: GameRow, g: Go.GoState, playerId: string) {
   };
 }
 
+function seaSummary(row: GameRow, g: Sea.SeaState, playerId: string) {
+  const seat = Sea.seatOf(g, playerId)!;
+  const them = seat === 0 ? 1 : 0;
+  const last = g.salvos[g.salvos.length - 1];
+  const lastText = last
+    ? `${g.players[last.by].name} fired ${last.shots.length}: ${last.shots.filter((x) => x.hit).length} hit${last.shots.filter((x) => x.hit).length === 1 ? "" : "s"}`
+    : null;
+  const myTurn = g.phase === "setup" ? !g.fleets[seat] : g.phase === "battle" && Sea.shooterOf(g) === seat;
+  return {
+    id: row.id,
+    kind: "sea" as const,
+    status: g.phase === "finished" ? "finished" as const : "active" as const,
+    updatedAt: row.updated_at,
+    opponent: g.players[them].name,
+    vsCpu: Sea.isCpu(g.players[them]),
+    size: g.size,
+    phase: g.phase,
+    myTurn,
+    turnName: g.phase === "battle" ? g.players[Sea.shooterOf(g)].name : g.players[them].name,
+    myShips: g.phase === "setup" ? null : Sea.shipsAfloat(g, seat),
+    theirShips: g.phase === "setup" ? null : Sea.shipsAfloat(g, them),
+    lastMove: g.phase === "setup" ? (g.fleets[seat] ? `Waiting for ${g.players[them].name} to place ships` : "Place your ships") : lastText,
+    winnerIsMe: g.result ? (g.result.winner === null ? null : g.result.winner === seat) : null,
+    endText: g.phase === "finished" ? Sea.describeSeaEnd(g) : null,
+  };
+}
+
 function summary(row: GameRow, playerId: string) {
-  const parsed = JSON.parse(row.state) as GameState | ChessState | Go.GoState;
+  const parsed = JSON.parse(row.state) as GameState | ChessState | Go.GoState | Sea.SeaState;
+  if ((parsed as Sea.SeaState).kind === "sea") return seaSummary(row, parsed as Sea.SeaState, playerId);
   if ((parsed as ChessState).kind === "chess") return chessSummary(row, parsed as ChessState, playerId);
   if ((parsed as Go.GoState).kind === "go") return goSummary(row, parsed as Go.GoState, playerId);
   const g = parsed as GameState;
@@ -399,6 +428,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
 
   if (path.startsWith("/api/chess")) return handleChess(req, env, ctx, url, me);
   if (path === "/api/go" || path.startsWith("/api/go/")) return handleGo(req, env, ctx, url, me);
+  if (path === "/api/sea" || path.startsWith("/api/sea/")) return handleSea(req, env, ctx, url, me);
 
   // Lets the client preview words without shipping the full list (fallback path).
   if (path === "/api/words/check" && method === "POST") {
@@ -493,8 +523,8 @@ async function handleChat(
       "SELECT player_id FROM game_players WHERE game_id = ? AND player_id != ?",
     ).bind(gameId, me.id).all<{ player_id: string }>();
     const kind = await env.DB.prepare("SELECT kind FROM games WHERE id = ?").bind(gameId).first<{ kind: string }>();
-    const seg = kind?.kind === "chess" ? "c" : kind?.kind === "go" ? "go" : "g";
-    const label = kind?.kind === "chess" ? "Chess" : kind?.kind === "go" ? "Go" : "Word Battles";
+    const seg = kind?.kind === "chess" ? "c" : kind?.kind === "go" ? "go" : kind?.kind === "sea" ? "sea" : "g";
+    const label = kind?.kind === "chess" ? "Chess" : kind?.kind === "go" ? "Go" : kind?.kind === "sea" ? "Sea Battle" : "Word Battles";
     const preview = clean.length > 140 ? `${clean.slice(0, 137)}...` : clean;
     ctx.waitUntil(notify(env, url.origin, others.map((o) => o.player_id), (p) => ({
       title: `${me.name} (${label} chat)`,
@@ -761,6 +791,131 @@ async function handleGo(req: Request, env: Env, ctx: ExecutionContext, url: URL,
   throw new HttpError(404, "Not found.");
 }
 
+// ------------------------------------------------------------------ sea battle
+
+/** Plays the computer's salvos while it's the computer's turn. */
+function runSeaCpu(g: Sea.SeaState) {
+  while (g.phase === "battle") {
+    const shooter = Sea.shooterOf(g);
+    const side = g.players[shooter];
+    if (!Sea.isCpu(side)) break;
+    Sea.fire(g, shooter, Sea.cpuSalvo(g, shooter, side.cpu, rng));
+  }
+}
+
+function describeSalvo(g: Sea.SeaState, salvo: Sea.Salvo): string {
+  const hits = salvo.shots.filter((s) => s.hit).length;
+  const sunk = salvo.shots.filter((s) => s.sunk).map((s) => Sea.specOf(g.size, s.sunk!).name);
+  return `${hits} hit${hits === 1 ? "" : "s"} from ${salvo.shots.length} shot${salvo.shots.length === 1 ? "" : "s"}`
+    + (sunk.length ? `, sank your ${sunk.join(" and ")}` : "");
+}
+
+async function handleSea(req: Request, env: Env, ctx: ExecutionContext, url: URL, me: Player): Promise<Response> {
+  const path = url.pathname;
+  const method = req.method;
+  const origin = url.origin;
+
+  if (path === "/api/sea" && method === "POST") {
+    const input = await body<{ opponentId?: string; cpu?: Sea.SeaCpu; size?: number }>(req);
+    const size = Number(input.size) as Sea.SeaSize;
+    let opp: Sea.SeaSide;
+    if (input.cpu) {
+      if (input.cpu !== "easy" && input.cpu !== "smart") throw new HttpError(400, "Pick Easy or Smart.");
+      opp = { cpu: input.cpu, name: input.cpu === "easy" ? "Computer (easy)" : "Computer (smart)" };
+    } else {
+      if (!input.opponentId || input.opponentId === me.id) throw new HttpError(400, "Pick an opponent.");
+      const p = await env.DB.prepare("SELECT id, name FROM players WHERE id = ?").bind(input.opponentId)
+        .first<{ id: string; name: string }>();
+      if (!p) throw new HttpError(400, "Unknown player.");
+      opp = { id: p.id, name: p.name };
+    }
+    const g = Sea.createSeaGame({ id: me.id, name: me.name }, opp, size, rng);
+    const id = randomId(8);
+    const now = Date.now();
+    const humans = g.players.map(Sea.sideId).filter((x): x is string => !!x);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO games (id, state, version, status, created_by, created_at, updated_at, kind) VALUES (?, ?, 0, 'active', ?, ?, ?, 'sea')")
+        .bind(id, JSON.stringify(g), me.id, now, now),
+      ...humans.map((pid, seat) => env.DB.prepare("INSERT INTO game_players (game_id, player_id, seat) VALUES (?, ?, ?)").bind(id, pid, seat)),
+    ]);
+    if (!Sea.isCpu(opp)) {
+      ctx.waitUntil(notify(env, origin, [opp.id], (p) => ({
+        title: `New Sea Battle with ${me.name}`,
+        body: `${size}x${size} board. Place your ships to begin.`,
+        url: `/p/${p.token}/sea/${id}`,
+        tag: `sea-${id}`,
+      })));
+    }
+    return json({ id }, 201);
+  }
+
+  let m = /^\/api\/sea\/([\w-]+)$/.exec(path);
+  if (m && method === "GET") {
+    const row = await loadGame(env, m[1]);
+    const since = url.searchParams.get("since");
+    if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
+    const g = JSON.parse(row.state) as Sea.SeaState;
+    if (g.kind !== "sea") throw new HttpError(404, "Game not found.");
+    if (Sea.seatOf(g, me.id) === null) throw new HttpError(403, "You are not in this game.");
+    return json(Sea.seaViewFor(g, me.id, row.id, row.version));
+  }
+
+  m = /^\/api\/sea\/([\w-]+)\/action$/.exec(path);
+  if (m && method === "POST") {
+    const input = await body<{ version?: number; action?: string; fleet?: Sea.Ship[]; points?: number[] }>(req);
+    const row = await loadGame(env, m[1]);
+    const g = JSON.parse(row.state) as Sea.SeaState;
+    if (g.kind !== "sea") throw new HttpError(404, "Game not found.");
+    const seat = Sea.seatOf(g, me.id);
+    if (seat === null) throw new HttpError(403, "You are not in this game.");
+    // Placing ships happens in parallel, so it doesn't need the version check.
+    if (input.action !== "place" && typeof input.version === "number" && input.version !== row.version) {
+      throw new HttpError(409, "The game changed since you loaded it. Refreshing...");
+    }
+    const them = seat === 0 ? 1 : 0;
+    const oppSide = g.players[them];
+    let note: { title: string; body: string } | null = null;
+    switch (input.action) {
+      case "place":
+        Sea.placeFleet(g, seat, Array.isArray(input.fleet) ? input.fleet : []);
+        if (g.phase === "battle") {
+          const firstName = g.players[g.first].name;
+          note = { title: `Sea Battle with ${me.name}: battle stations!`, body: g.first === them ? "Both fleets are ready. You fire first." : `Both fleets are ready. ${firstName} fires first.` };
+        } else {
+          note = { title: `${me.name} has placed their ships`, body: "Place yours to start the Sea Battle." };
+        }
+        break;
+      case "fire": {
+        const salvo = Sea.fire(g, seat, Array.isArray(input.points) ? input.points : []);
+        note = g.lastChance && g.phase === "battle"
+          ? { title: `${me.name} sank your whole fleet!`, body: "You get one last salvo to draw the game." }
+          : { title: `Your turn vs ${me.name} (Sea Battle)`, body: `${me.name}: ${describeSalvo(g, salvo)}.` };
+        break;
+      }
+      case "resign": Sea.resign(g, seat); break;
+      default: throw new HttpError(400, "Unknown action.");
+    }
+    runSeaCpu(g);
+
+    const now = Date.now();
+    const status = g.phase === "finished" ? "finished" : "active";
+    // If both players place ships at the same instant, one gets a 409 and the app retries.
+    const res = await env.DB.prepare(
+      "UPDATE games SET state = ?, version = version + 1, status = ?, updated_at = ? WHERE id = ? AND version = ?",
+    ).bind(JSON.stringify(g), status, now, row.id, row.version).run();
+    if (!res.meta.changes) throw new HttpError(409, "The game changed at the same time. Please try again.");
+    if (g.phase === "finished") note = { title: `Sea Battle with ${me.name}: game over`, body: Sea.describeSeaEnd(g) };
+    const oppId = Sea.sideId(oppSide);
+    if (note && oppId) {
+      const n = note;
+      ctx.waitUntil(notify(env, origin, [oppId], (p) => ({ ...n, url: `/p/${p.token}/sea/${row.id}`, tag: `sea-${row.id}` })));
+    }
+    return json(Sea.seaViewFor(g, me.id, row.id, row.version + 1));
+  }
+
+  throw new HttpError(404, "Not found.");
+}
+
 /** Serves the app shell for personal links, pointing at a per-player manifest
  *  so "Add to Home Screen" opens straight into that person's link. */
 async function serveShell(req: Request, env: Env, token: string): Promise<Response> {
@@ -785,7 +940,7 @@ export default {
       return env.ASSETS.fetch(req);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status);
-      if (e instanceof MoveError || e instanceof ChessError || e instanceof Go.GoError) return json({ error: e.message }, 422);
+      if (e instanceof MoveError || e instanceof ChessError || e instanceof Go.GoError || e instanceof Sea.SeaError) return json({ error: e.message }, 422);
       console.error(e);
       return json({ error: "Something went wrong. Please try again." }, 500);
     }

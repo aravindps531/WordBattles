@@ -1,6 +1,7 @@
 import type { GameView, PlacedTile } from "../shared/engine";
 import type { ChessView, Color } from "../shared/chess";
 import type { GoColor, GoView } from "../shared/go";
+import type { SeaCpu, SeaView, Ship } from "../shared/seabattle";
 
 export interface GameSummary {
   kind: "words";
@@ -54,7 +55,25 @@ export type GoAction =
   | "play" | "pass" | "resign" | "takeback" | "accept-takeback" | "decline-takeback"
   | "toggle-dead" | "accept-score" | "resume";
 
-export type AnySummary = (GameSummary | ChessSummary | GoSummary) & { unreadChat?: number };
+export interface SeaSummary {
+  kind: "sea";
+  id: string;
+  status: "active" | "finished";
+  updatedAt: number;
+  opponent: string;
+  vsCpu: boolean;
+  size: number;
+  phase: "setup" | "battle" | "finished";
+  myTurn: boolean;
+  turnName: string;
+  myShips: number | null;
+  theirShips: number | null;
+  lastMove: string | null;
+  winnerIsMe: boolean | null;
+  endText: string | null;
+}
+
+export type AnySummary = (GameSummary | ChessSummary | GoSummary | SeaSummary) & { unreadChat?: number };
 
 export interface ChatMessage { id: number; playerId: string; name: string; body: string; at: number }
 
@@ -130,6 +149,15 @@ export class Api {
   }
   goAction(id: string, version: number, action: GoAction, point?: number) {
     return this.req<GoView>(`/api/go/${id}/action`, { method: "POST", body: JSON.stringify({ version, action, point }) });
+  }
+  createSea(opts: { opponentId?: string; cpu?: SeaCpu; size: number }) {
+    return this.req<{ id: string }>("/api/sea", { method: "POST", body: JSON.stringify(opts) });
+  }
+  sea(id: string, since?: number) {
+    return this.req<SeaView | { unchanged: true; version: number }>(`/api/sea/${id}${since !== undefined ? `?since=${since}` : ""}`);
+  }
+  seaAction(id: string, version: number, action: "place" | "fire" | "resign", extra: { fleet?: Ship[]; points?: number[] } = {}) {
+    return this.req<SeaView>(`/api/sea/${id}/action`, { method: "POST", body: JSON.stringify({ version, action, ...extra }) });
   }
   chatMessages(gameId: string, after = 0) {
     return this.req<{ messages: ChatMessage[]; lastReadId: number }>(`/api/games/${gameId}/chat?after=${after}`);

@@ -5,6 +5,7 @@ import {
 } from "../shared/go";
 import type { Api, ApiError, GoAction } from "./api";
 import { ChatPanel, useChat } from "./Chat";
+import { GoHowTo, HowToButton, HowToPanel, useHowTo } from "./HowTo";
 
 const POLL_MS = 15000;
 const CONFIRM_KEY = "swb-go-confirm";
@@ -88,6 +89,7 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
   const opp = other(my);
   const meId = view ? playerOf(view, my).id : null;
   const chat = useChat(api, gameId, meId, chatOpen);
+  const howTo = useHowTo("go");
 
   const act = useCallback(async (action: GoAction, point?: number) => {
     if (!view) return;
@@ -205,12 +207,14 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
         <span class="top-right">
           <span class="muted small">Go {n}&times;{n} &middot; move {view.moves.length + 1}</span>
+          <HowToButton onClick={howTo.show} />
           <button class="btn chat-btn" onClick={() => setChatOpen(true)} aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
             Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
           </button>
         </span>
       </header>
 
+      {howTo.open && <HowToPanel k="go" title="Go" onClose={howTo.close}><GoHowTo /></HowToPanel>}
       {chatOpen && (
         <ChatPanel messages={chat.messages} meId={meId} onSend={chat.send} onClose={() => {
           setChatOpen(false);

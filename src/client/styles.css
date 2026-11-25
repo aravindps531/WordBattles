@@ -410,3 +410,60 @@ input {
 .hint .good { color: var(--mine); }
 .kind-icon.go-icon { background: radial-gradient(circle at 40% 40%, #fff 0 28%, transparent 30%), radial-gradient(circle at 62% 62%, #111 0 28%, transparent 30%), #dcb35c; }
 .tabs .tab { padding: 0 6px; }
+
+/* ---------- how to play */
+.help-btn { min-height: 36px; min-width: 36px; padding: 0; border-radius: 50%; font-weight: 800; }
+.modal.howto { max-height: 88dvh; width: min(100%, 520px); display: flex; flex-direction: column; gap: 10px; }
+.modal.howto .howto-body { overflow-y: auto; min-height: 0; flex: 1; padding-right: 4px; }
+.modal.howto .setting, .modal.howto .btn { flex: none; }
+.howto-body ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.96rem; }
+.top-right { gap: 8px; }
+
+/* ---------- sea battle */
+.sgrid {
+  --cell: calc((var(--bsize) - 22px) / var(--n));
+  display: grid; grid-template-columns: 18px repeat(var(--n), var(--cell)); grid-auto-rows: var(--cell);
+  gap: 2px; width: max-content; user-select: none; -webkit-user-select: none; touch-action: manipulation;
+}
+.sgrid > span:first-child { height: 16px; }
+.sgrid .slabel { display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; color: var(--muted); }
+.sgrid > .slabel:nth-child(-n + 11) { height: 16px; align-self: end; }
+.scell {
+  border: 0; padding: 0; margin: 0; border-radius: 3px; background: #bfe0ee; position: relative;
+  display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: calc(var(--cell) * 0.55); color: #22526a;
+}
+.scell.aimable { cursor: crosshair; }
+.scell.ship { background: #6f7c86; color: #fff; }
+.scell.ship.sel { background: var(--accent); }
+.scell.ship.revealed { background: #8a949b; }
+.scell.miss { color: #3d6f87; }
+.scell.hit { background: #e05a47; color: #fff; }
+.scell.ship.hit { background: #b4321f; }
+.scell.aim { background: #ffe17a; color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+.scell.recent { box-shadow: inset 0 0 0 2px #ffb54a; }
+.sgrid.small { --cell: calc((var(--bsize) * 0.62 - 22px) / var(--n)); }
+.sgrid.small .scell { font-size: calc(var(--cell) * 0.6); }
+.sea .board-wrap { --bsize: min(calc(100vw - 20px), 520px); }
+.sea-boards { flex-direction: column; align-items: center; gap: 10px; }
+.sea-col { display: grid; gap: 4px; justify-items: center; }
+.grid-title { margin: 0; font-size: 0.95rem; }
+.fleet-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ship-bar { display: inline-flex; gap: 2px; vertical-align: middle; }
+.ship-bar i { width: 9px; height: 9px; border-radius: 2px; background: #6f7c86; display: block; }
+.fs-ship.sunk .ship-bar i { background: #e05a47; }
+.fs-ship.sunk { opacity: 0.7; }
+.ship-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.ship-chip {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface); font-weight: 700; cursor: pointer;
+}
+.ship-chip.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.ship-chip.placed { color: var(--mine); }
+.salvo-log { font-size: 0.9rem; list-style: none; padding-left: 0; }
+.game.sea { grid-template-areas: "top" "banner" "board" "panel"; }
+@media (min-width: 900px) and (orientation: landscape), (min-width: 1100px) {
+  .game.sea { grid-template-columns: 1fr; grid-template-areas: "top" "banner" "board" "panel"; max-width: 1100px; }
+  .sea .board-wrap { --bsize: min(calc(100dvh - 200px), 520px); }
+  .sea-boards { flex-direction: row; align-items: flex-start; justify-content: center; gap: 24px; }
+  .sgrid.small { --cell: calc((var(--bsize) * 0.75 - 22px) / var(--n)); }
+}

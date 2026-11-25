@@ -4,6 +4,7 @@ import type { Dictionary } from "../shared/dictionary";
 import { evaluatePlacement, MoveError, type GameView, type Move, type PlacedTile } from "../shared/engine";
 import { Api, ApiError } from "./api";
 import { ChatPanel, useChat } from "./Chat";
+import { HowToButton, HowToPanel, useHowTo, WordsHowTo } from "./HowTo";
 import { loadDictionary } from "./words";
 
 interface RackItem { id: number; t: string }               // t is a letter or "?" for a blank
@@ -114,6 +115,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
   const myTurn = !!view && view.status === "active" && view.turn === mySeat;
   const meId = view && mySeat !== null ? view.seats[mySeat].id : null;
   const chat = useChat(api, gameId, meId, chatOpen);
+  const howTo = useHowTo("words");
   const lastMove = view?.moves[view.moves.length - 1];
   const lastPlay = useMemo(() => {
     if (!view) return null;
@@ -282,6 +284,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
         <span class="top-right">
           <span class="bag" title="Tiles left in the bag">Bag: <b>{view.bagCount}</b></span>
+          <HowToButton onClick={howTo.show} />
           <button class="btn chat-btn" onClick={() => setChatOpen(true)}
             aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
             Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
@@ -289,6 +292,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
         </span>
       </header>
 
+      {howTo.open && <HowToPanel k="words" title="Word Battles" onClose={howTo.close}><WordsHowTo /></HowToPanel>}
       {chatOpen && (
         <ChatPanel messages={chat.messages} meId={meId} onSend={chat.send} onClose={() => {
           setChatOpen(false);

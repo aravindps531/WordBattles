@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { Api, type AnySummary, type ChessSummary, type GameSummary, type GoSummary, type MeResponse } from "./api";
+import { Api, type AnySummary, type ChessSummary, type GameSummary, type GoSummary, type MeResponse, type SeaSummary } from "./api";
 import { enablePush, isIOS, isStandalone, pushState, syncSubscription, type PushState } from "./push";
 
 function relTime(ts: number): string {
@@ -68,7 +68,9 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
 }
 
 function NewGame({ api, token, family }: { api: Api; token: string; family: { id: string; name: string }[] }) {
-  const [kind, setKind] = useState<"words" | "chess" | "go">("words");
+  const [kind, setKind] = useState<"words" | "chess" | "go" | "sea">("words");
+  const [seaSize, setSeaSize] = useState<8 | 10>(10);
+  const [seaCpu, setSeaCpu] = useState<"easy" | "smart">("easy");
   const [goSize, setGoSize] = useState<9 | 13>(9);
   const [handicap, setHandicap] = useState(0);
   const [goColor, setGoColor] = useState<"random" | "b" | "w">("random");
@@ -106,6 +108,13 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
     } catch (e) { alert((e as Error).message); setCreating(false); }
   };
   const maxHandicap = goSize === 9 ? 5 : 9;
+  const startSea = async () => {
+    setCreating(true);
+    try {
+      const { id } = await api.createSea(opponent === "cpu" ? { cpu: seaCpu, size: seaSize } : { opponentId: opponent, size: seaSize });
+      location.href = `/p/${token}/sea/${id}`;
+    } catch (e) { alert((e as Error).message); setCreating(false); }
+  };
 
   return (
     <section class="card">
@@ -114,6 +123,7 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
         <button role="tab" aria-selected={kind === "words"} class={`tab ${kind === "words" ? "on" : ""}`} onClick={() => setKind("words")}>Word Battles</button>
         <button role="tab" aria-selected={kind === "chess"} class={`tab ${kind === "chess" ? "on" : ""}`} onClick={() => { setKind("chess"); }}>Chess</button>
         <button role="tab" aria-selected={kind === "go"} class={`tab ${kind === "go" ? "on" : ""}`} onClick={() => { setKind("go"); if (opponent === "cpu") setOpponent(""); }}>Go</button>
+        <button role="tab" aria-selected={kind === "sea"} class={`tab ${kind === "sea" ? "on" : ""}`} onClick={() => setKind("sea")}>Sea Battle</button>
       </div>
 
       {kind === "words" ? (
@@ -134,6 +144,44 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
             </button>
           </>
         )
+      ) : kind === "sea" ? (
+        <>
+          <p class="muted small">Play against</p>
+          <div class="pick">
+            {family.map((p) => (
+              <label key={p.id} class={`chip ${opponent === p.id ? "on" : ""}`}>
+                <input type="radio" name="sopp" checked={opponent === p.id} onChange={() => setOpponent(p.id)} />
+                {p.name}
+              </label>
+            ))}
+            <label class={`chip ${opponent === "cpu" ? "on" : ""}`}>
+              <input type="radio" name="sopp" checked={opponent === "cpu"} onChange={() => setOpponent("cpu")} />
+              Computer
+            </label>
+          </div>
+          {opponent === "cpu" && (
+            <div class="pick">
+              {([["easy", "Easy"], ["smart", "Smart"]] as const).map(([v, label]) => (
+                <label key={v} class={`chip ${seaCpu === v ? "on" : ""}`}>
+                  <input type="radio" name="scpu" checked={seaCpu === v} onChange={() => setSeaCpu(v)} />
+                  {label}
+                </label>
+              ))}
+            </div>
+          )}
+          <p class="muted small">Board</p>
+          <div class="pick">
+            {([[10, "10\u00d710, 5 ships"], [8, "8\u00d78 quick, 4 ships"]] as const).map(([v, label]) => (
+              <label key={v} class={`chip ${seaSize === v ? "on" : ""}`}>
+                <input type="radio" name="ssize" checked={seaSize === v} onChange={() => setSeaSize(v)} />
+                {label}
+              </label>
+            ))}
+          </div>
+          <button class="btn primary wide" disabled={!opponent || creating} onClick={startSea}>
+            {creating ? "Starting..." : "Start Sea Battle"}
+          </button>
+        </>
       ) : kind === "go" ? (
         family.length === 0 ? <p class="muted">No other players yet. Add them on the admin page.</p> : (
           <>
@@ -223,10 +271,33 @@ function Section({ title, games, token, meId }: { title: string; games: AnySumma
       <h2 class="section-title">{title}</h2>
       <ul class="games">
         {games.map((g) => (
-          <li key={g.id}>{g.kind === "go" ? <GoCard g={g as GoSummary & { unreadChat?: number }} token={token} /> : g.kind === "chess" ? <ChessCard g={g as ChessSummary & { unreadChat?: number }} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
+          <li key={g.id}>{g.kind === "sea" ? <SeaCard g={g as SeaSummary & { unreadChat?: number }} token={token} /> : g.kind === "go" ? <GoCard g={g as GoSummary & { unreadChat?: number }} token={token} /> : g.kind === "chess" ? <ChessCard g={g as ChessSummary & { unreadChat?: number }} token={token} /> : <WordsCard g={g as GameSummary & { unreadChat?: number }} token={token} meId={meId} />}</li>
         ))}
       </ul>
     </section>
+  );
+}
+
+function SeaCard({ g, token }: { g: SeaSummary & { unreadChat?: number }; token: string }) {
+  const status = g.status === "finished" ? (g.winnerIsMe === null ? "Draw" : g.winnerIsMe ? "You won" : `${g.opponent} won`)
+    : g.phase === "setup" ? (g.myTurn ? "Place ships" : "Waiting")
+    : g.myTurn ? "Your turn" : `${g.turnName}'s turn`;
+  return (
+    <a class={`game-card ${g.myTurn ? "mine" : ""}`} href={`/p/${token}/sea/${g.id}`}>
+      <div class="gc-head">
+        <span class="gc-title"><span class="kind-icon" aria-hidden="true">&#9875;</span> Sea Battle vs {g.opponent}</span>
+        <span class={`gc-status ${g.myTurn && g.status === "active" ? "mine" : ""}`}>{status}</span>
+      </div>
+      {g.myShips !== null && (
+        <div class="gc-scores">
+          <span>Your ships <b>{g.myShips}</b></span>
+          <span>Theirs <b>{g.theirShips}</b></span>
+          <span>{g.size}&times;{g.size}</span>
+        </div>
+      )}
+      {(g.endText || g.lastMove) && <div class="gc-last muted small">{g.endText ?? g.lastMove} &middot; {relTime(g.updatedAt)}</div>}
+      {!!g.unreadChat && <div class="gc-chat">{g.unreadChat} new message{g.unreadChat > 1 ? "s" : ""}</div>}
+    </a>
   );
 }
 
