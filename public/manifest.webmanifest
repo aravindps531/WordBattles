@@ -1,6 +1,6 @@
 {
-  "name": "Sarathys' Word Battles",
-  "short_name": "Word Battles",
+  "name": "Sarathys' Game Room",
+  "short_name": "Game Room",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

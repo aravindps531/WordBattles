@@ -4,8 +4,8 @@ self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
 self.addEventListener("push", (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch { data = { title: "Word Battles", body: event.data?.text() }; }
-  const title = data.title || "Sarathys' Word Battles";
+  try { data = event.data ? event.data.json() : {}; } catch { data = { title: "Game Room", body: event.data?.text() }; }
+  const title = data.title || "Sarathys' Game Room";
   event.waitUntil(Promise.all([
     self.registration.showNotification(title, {
       body: data.body || "",

@@ -1,0 +1,2 @@
+Chess piece images: "Chessnut" by Alexis Luengas (https://github.com/LexLuengas/chessnut-pieces),
+licensed under the Apache License 2.0 (see LICENSE.txt in this folder). Unmodified.

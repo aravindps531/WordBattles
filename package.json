@@ -1,7 +1,7 @@
 {
   "name": "sarathys-word-battles",
   "version": "1.0.0",
-  "description": "A family word game for 2-4 players, played across days.",
+  "description": "Sarathys' Game Room: family word games and chess for 2-4 players, played across days.",
   "scripts": {
     "build": "vite build",
     "dev": "npm run build && wrangler dev",
@@ -12,8 +12,9 @@
     "db:migrate": "wrangler d1 migrations apply word-battles --remote",
     "vapid": "node scripts/vapid.mjs",
     "words": "node scripts/build-words.mjs",
-    "prebuild": "node scripts/build-words.mjs --if-missing",
-    "pretest": "node scripts/build-words.mjs --if-missing"
+    "prebuild": "node scripts/build-words.mjs --if-missing && node scripts/fetch-engine.mjs --if-missing",
+    "pretest": "node scripts/build-words.mjs --if-missing",
+    "engine": "node scripts/fetch-engine.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261125.1",
@@ -24,6 +25,7 @@
     "wrangler": "^4.168.0"
   },
   "dependencies": {
+    "chess.js": "^1.4.0",
     "preact": "^11.2.0"
   },
   "private": true,

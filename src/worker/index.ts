@@ -3,6 +3,11 @@ import {
   applyExchange, applyPass, applyPlay, applyResign, createGame, MoveError,
   type GameState, type Move, viewFor,
 } from "../shared/engine";
+import {
+  answerDraw, answerTakeback, applyChessMove, ChessError, chessViewFor, colorOf, createChessGame,
+  CPU_LEVELS, describeChessEnd, isCpu, offerDraw, other, requestTakeback, resign, sideId, sideOf,
+  turnOf, type ChessState, type Color, type Side,
+} from "../shared/chess";
 import { sendPush, type VapidKeys } from "./webpush";
 
 export interface Env {
@@ -16,8 +21,8 @@ export interface Env {
 
 interface Player { id: string; name: string; token: string }
 
-const APP_NAME = "Sarathys' Word Battles";
-const SHORT_NAME = "Word Battles";
+const APP_NAME = "Sarathys' Game Room";
+const SHORT_NAME = "Game Room";
 const WORDS_PATH = "/words-v1.txt";
 
 class HttpError extends Error {
@@ -76,7 +81,7 @@ function requireAdmin(req: Request, env: Env) {
   if (req.headers.get("x-admin-key") !== env.ADMIN_KEY) throw new HttpError(403, "Wrong admin key.");
 }
 
-interface GameRow { id: string; state: string; version: number; status: string; updated_at: number }
+interface GameRow { id: string; state: string; version: number; status: string; updated_at: number; kind?: string }
 
 async function loadGame(env: Env, id: string): Promise<GameRow> {
   const row = await env.DB.prepare("SELECT id, state, version, status, updated_at FROM games WHERE id = ?")
@@ -130,12 +135,39 @@ function gameLabel(g: GameState, forPlayer: string): string {
   return `with ${others.join(" & ")}`;
 }
 
+function chessSummary(row: GameRow, g: ChessState, playerId: string) {
+  const mine = colorOf(g, playerId);
+  const turn = turnOf(g);
+  const last = g.moves[g.moves.length - 1];
+  const lastBy = last ? sideOf(g, g.moves.length % 2 === 1 ? "w" : "b").name : "";
+  const opp = mine ? sideOf(g, other(mine)) : g.black;
+  return {
+    id: row.id,
+    kind: "chess" as const,
+    status: g.status,
+    updatedAt: row.updated_at,
+    opponent: opp.name,
+    myColor: mine,
+    myTurn: g.status === "active" && turn === mine,
+    turnName: sideOf(g, turn).name,
+    cpuTurn: g.status === "active" && isCpu(sideOf(g, turn)),
+    moveNumber: Math.floor(g.moves.length / 2) + 1,
+    lastMove: last ? `${lastBy} played ${last.san}` : null,
+    result: g.result ?? null,
+    endText: g.status === "finished" ? describeChessEnd(g) : null,
+    pending: g.drawOffer && g.drawOffer !== mine ? "draw" : g.takeback && g.takeback !== mine ? "takeback" : null,
+  };
+}
+
 function summary(row: GameRow, playerId: string) {
-  const g = JSON.parse(row.state) as GameState;
+  const parsed = JSON.parse(row.state) as GameState | ChessState;
+  if ((parsed as ChessState).kind === "chess") return chessSummary(row, parsed as ChessState, playerId);
+  const g = parsed as GameState;
   const last = g.moves[g.moves.length - 1];
   const mySeat = g.seats.indexOf(playerId);
   return {
     id: row.id,
+    kind: "words" as const,
     status: g.status,
     updatedAt: row.updated_at,
     players: g.seats.map((id, i) => ({ id, name: g.names[i], score: g.scores[i], resigned: g.resigned[i] })),
@@ -213,7 +245,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
 
   if (path === "/api/me" && method === "GET") {
     const { results } = await env.DB.prepare(
-      `SELECT g.id, g.state, g.version, g.status, g.updated_at
+      `SELECT g.id, g.state, g.version, g.status, g.updated_at, g.kind
          FROM games g JOIN game_players gp ON gp.game_id = g.id
         WHERE gp.player_id = ?
         ORDER BY g.updated_at DESC LIMIT 50`,
@@ -261,6 +293,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     const since = url.searchParams.get("since");
     if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
     const g = JSON.parse(row.state) as GameState;
+    if ((g as unknown as ChessState).kind === "chess") throw new HttpError(404, "Game not found.");
     if (!g.seats.includes(me.id)) throw new HttpError(403, "You are not in this game.");
     return json(viewFor(g, me.id, row.id, row.version));
   }
@@ -273,6 +306,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     }>(req);
     const row = await loadGame(env, m[1]);
     const g = JSON.parse(row.state) as GameState;
+    if ((g as unknown as ChessState).kind === "chess") throw new HttpError(404, "Game not found.");
     const seat = g.seats.indexOf(me.id);
     if (seat < 0) throw new HttpError(403, "You are not in this game.");
     if (typeof input.version === "number" && input.version !== row.version) {
@@ -321,6 +355,8 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     return json(viewFor(g, me.id, row.id, row.version + 1));
   }
 
+  if (path.startsWith("/api/chess")) return handleChess(req, env, ctx, url, me);
+
   // Lets the client preview words without shipping the full list (fallback path).
   if (path === "/api/words/check" && method === "POST") {
     const { words } = await body<{ words?: string[] }>(req);
@@ -355,6 +391,140 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
   throw new HttpError(404, "Not found.");
 }
 
+// ------------------------------------------------------------------ chess
+
+const CHESS_ACTIONS = [
+  "move", "cpu-move", "resign", "offer-draw", "accept-draw", "decline-draw",
+  "takeback", "accept-takeback", "decline-takeback",
+] as const;
+type ChessAction = (typeof CHESS_ACTIONS)[number];
+
+async function handleChess(req: Request, env: Env, ctx: ExecutionContext, url: URL, me: Player): Promise<Response> {
+  const path = url.pathname;
+  const method = req.method;
+  const origin = url.origin;
+
+  if (path === "/api/chess" && method === "POST") {
+    const input = await body<{ opponentId?: string; cpuLevel?: number; color?: "w" | "b" | "random" }>(req);
+    const meSide: Side = { id: me.id, name: me.name };
+    let opp: Side;
+    if (input.cpuLevel !== undefined) {
+      const level = Number(input.cpuLevel);
+      if (!CPU_LEVELS.includes(level as (typeof CPU_LEVELS)[number])) throw new HttpError(400, "Pick a level from 1 to 8.");
+      opp = { cpu: level, name: `Computer (level ${level})` };
+    } else {
+      if (!input.opponentId || input.opponentId === me.id) throw new HttpError(400, "Pick an opponent.");
+      const p = await env.DB.prepare("SELECT id, name FROM players WHERE id = ?").bind(input.opponentId)
+        .first<{ id: string; name: string }>();
+      if (!p) throw new HttpError(400, "Unknown player.");
+      opp = { id: p.id, name: p.name };
+    }
+    const myColor: Color = input.color === "w" || input.color === "b" ? input.color : rng(2) === 0 ? "w" : "b";
+    const g = createChessGame(myColor === "w" ? meSide : opp, myColor === "w" ? opp : meSide);
+    const id = randomId(8);
+    const now = Date.now();
+    const humans = [g.white, g.black].map(sideId).filter((x): x is string => !!x);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO games (id, state, version, status, created_by, created_at, updated_at, kind) VALUES (?, ?, 0, ?, ?, ?, ?, 'chess')")
+        .bind(id, JSON.stringify(g), g.status, me.id, now, now),
+      ...humans.map((pid, seat) =>
+        env.DB.prepare("INSERT INTO game_players (game_id, player_id, seat) VALUES (?, ?, ?)").bind(id, pid, seat)),
+    ]);
+    if (!isCpu(opp)) {
+      const oppColor = other(myColor);
+      ctx.waitUntil(notify(env, origin, [opp.id], (p) => ({
+        title: `New chess game with ${me.name}`,
+        body: oppColor === "w" ? "You play White, so it's your move." : `You play Black. ${me.name} moves first.`,
+        url: `/p/${p.token}/c/${id}`,
+        tag: `chess-${id}`,
+      })));
+    }
+    return json({ id }, 201);
+  }
+
+  let m = /^\/api\/chess\/([\w-]+)$/.exec(path);
+  if (m && method === "GET") {
+    const row = await loadGame(env, m[1]);
+    const since = url.searchParams.get("since");
+    if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
+    const g = JSON.parse(row.state) as ChessState;
+    if (g.kind !== "chess") throw new HttpError(404, "Game not found.");
+    if (!colorOf(g, me.id)) throw new HttpError(403, "You are not in this game.");
+    return json(chessViewFor(g, me.id, row.id, row.version));
+  }
+
+  m = /^\/api\/chess\/([\w-]+)\/action$/.exec(path);
+  if (m && method === "POST") {
+    const input = await body<{ version?: number; action?: ChessAction; uci?: string }>(req);
+    const row = await loadGame(env, m[1]);
+    const g = JSON.parse(row.state) as ChessState;
+    if (g.kind !== "chess") throw new HttpError(404, "Game not found.");
+    const color = colorOf(g, me.id);
+    if (!color) throw new HttpError(403, "You are not in this game.");
+    if (typeof input.version === "number" && input.version !== row.version) {
+      throw new HttpError(409, "The game changed since you loaded it. Refreshing...");
+    }
+    const oppSide = sideOf(g, other(color));
+    const oppId = sideId(oppSide);
+    let note: { title: string; body: string } | null = null;
+    switch (input.action) {
+      case "move": {
+        const mv = applyChessMove(g, color, String(input.uci ?? ""));
+        note = { title: `Your move vs ${me.name}`, body: `${me.name} played ${mv.san}.` };
+        break;
+      }
+      case "cpu-move": {
+        // The human's browser runs the engine and submits the computer's move.
+        if (!isCpu(oppSide)) throw new HttpError(400, "Not a game against the computer.");
+        applyChessMove(g, other(color), String(input.uci ?? ""));
+        break;
+      }
+      case "resign":
+        resign(g, color);
+        break;
+      case "offer-draw":
+        offerDraw(g, color);
+        if (g.status === "active") note = { title: `Draw offer from ${me.name}`, body: "Open the game to accept or decline." };
+        break;
+      case "accept-draw": answerDraw(g, color, true); break;
+      case "decline-draw":
+        answerDraw(g, color, false);
+        note = { title: `${me.name} declined your draw offer`, body: "The game goes on." };
+        break;
+      case "takeback":
+        requestTakeback(g, color);
+        if (g.takeback) note = { title: `${me.name} asks to take back a move`, body: "Open the game to allow or refuse." };
+        break;
+      case "accept-takeback":
+        answerTakeback(g, color, true);
+        note = { title: `${me.name} allowed your takeback`, body: "It's your move again." };
+        break;
+      case "decline-takeback":
+        answerTakeback(g, color, false);
+        note = { title: `${me.name} refused the takeback`, body: "It's still their move." };
+        break;
+      default:
+        throw new HttpError(400, "Unknown action.");
+    }
+    const now = Date.now();
+    const res = await env.DB.prepare(
+      "UPDATE games SET state = ?, version = version + 1, status = ?, updated_at = ? WHERE id = ? AND version = ?",
+    ).bind(JSON.stringify(g), g.status, now, row.id, row.version).run();
+    if (!res.meta.changes) throw new HttpError(409, "The game changed at the same time. Refreshing...");
+
+    if (oppId) {
+      if (g.status === "finished") note = { title: `Chess with ${me.name}: game over`, body: describeChessEnd(g) };
+      if (note) {
+        const n = note;
+        ctx.waitUntil(notify(env, origin, [oppId], (p) => ({ ...n, url: `/p/${p.token}/c/${row.id}`, tag: `chess-${row.id}` })));
+      }
+    }
+    return json(chessViewFor(g, me.id, row.id, row.version + 1));
+  }
+
+  throw new HttpError(404, "Not found.");
+}
+
 /** Serves the app shell for personal links, pointing at a per-player manifest
  *  so "Add to Home Screen" opens straight into that person's link. */
 async function serveShell(req: Request, env: Env, token: string): Promise<Response> {
@@ -379,7 +549,7 @@ export default {
       return env.ASSETS.fetch(req);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message }, e.status);
-      if (e instanceof MoveError) return json({ error: e.message }, 422);
+      if (e instanceof MoveError || e instanceof ChessError) return json({ error: e.message }, 422);
       console.error(e);
       return json({ error: "Something went wrong. Please try again." }, 500);
     }

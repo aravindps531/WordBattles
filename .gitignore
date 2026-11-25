@@ -5,3 +5,5 @@ dist/
 *.log
 # Copyrighted word list, downloaded at build time (npm run words)
 public/words-v1.txt
+# Stockfish engine (GPL-3.0), downloaded at build time (npm run engine)
+public/engine/

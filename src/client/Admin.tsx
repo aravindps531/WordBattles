@@ -70,7 +70,7 @@ export function AdminPage() {
           </section>
           <ul class="admin-list">
             {players.map((p) => {
-              const msg = `Hi ${p.name}! Here is your personal link for Sarathys' Word Battles:\n${p.link}\n\nOpen it, then add it to your home screen. Please don't share this link.`;
+              const msg = `Hi ${p.name}! Here is your personal link for Sarathys' Game Room (Word Battles and Chess):\n${p.link}\n\nOpen it, then add it to your home screen. Please don't share this link.`;
               return (
                 <li key={p.id} class="card">
                   <div class="admin-name">{p.name}</div>

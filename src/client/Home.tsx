@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { Api, type GameSummary, type MeResponse } from "./api";
+import { Api, type AnySummary, type ChessSummary, type GameSummary, type MeResponse } from "./api";
 import { enablePush, isIOS, isStandalone, pushState, syncSubscription, type PushState } from "./push";
 
 function relTime(ts: number): string {
@@ -14,8 +14,6 @@ function relTime(ts: number): string {
 export function HomePage({ api, token }: { api: Api; token: string }) {
   const [data, setData] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [picking, setPicking] = useState<Set<string>>(new Set());
-  const [creating, setCreating] = useState(false);
 
   const load = useCallback(() => {
     api.me().then((d) => { setData(d); setError(null); }).catch((e) => setError(e.message));
@@ -32,33 +30,24 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
   if (error && !data) {
     return (
       <div class="page">
-        <h1 class="title">Sarathys' Word Battles</h1>
+        <h1 class="title">Sarathys' Game Room</h1>
         <p class="error-box">{error}</p>
       </div>
     );
   }
   if (!data) return <div class="page"><p class="muted center">Loading...</p></div>;
 
+  const needsMe = (g: AnySummary) => g.myTurn || (g.kind === "chess" && (g.pending !== null || g.cpuTurn));
   const active = data.games.filter((g) => g.status === "active");
-  const mine = active.filter((g) => g.myTurn);
-  const waiting = active.filter((g) => !g.myTurn);
+  const mine = active.filter(needsMe);
+  const waiting = active.filter((g) => !needsMe(g));
   const finished = data.games.filter((g) => g.status === "finished").slice(0, 10);
-
-  const start = async () => {
-    setCreating(true);
-    try {
-      const { id } = await api.createGame([...picking]);
-      location.href = `/p/${token}/g/${id}`;
-    } catch (e) {
-      alert((e as Error).message);
-      setCreating(false);
-    }
-  };
+  const myTurnCount = active.filter((g) => g.myTurn).length;
 
   return (
     <div class="page">
-      <h1 class="title">Sarathys' Word Battles</h1>
-      <p class="hello">Hello, <b>{data.me.name}</b>{mine.length ? `. It's your turn in ${mine.length} game${mine.length > 1 ? "s" : ""}.` : "."}</p>
+      <h1 class="title">Sarathys' Game Room</h1>
+      <p class="hello">Hello, <b>{data.me.name}</b>{myTurnCount ? `. It's your turn in ${myTurnCount} game${myTurnCount > 1 ? "s" : ""}.` : "."}</p>
 
       <NotificationsCard api={api} />
 
@@ -66,79 +55,167 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
       {waiting.length > 0 && <Section title="Waiting for others" games={waiting} token={token} meId={data.me.id} />}
       {active.length === 0 && <p class="muted">No games in progress. Start one below.</p>}
 
-      <section class="card">
-        <h2>Start a new game</h2>
-        {data.family.length === 0 ? (
-          <p class="muted">No other players yet. Add them on the admin page.</p>
-        ) : (
-          <>
-            <p class="muted small">Pick 1 to 3 people. The starting order is drawn at random.</p>
-            <div class="pick">
-              {data.family.map((p) => (
-                <label key={p.id} class={`chip ${picking.has(p.id) ? "on" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={picking.has(p.id)}
-                    disabled={!picking.has(p.id) && picking.size >= 3}
-                    onChange={() => setPicking((s) => {
-                      const n = new Set(s);
-                      if (n.has(p.id)) n.delete(p.id); else n.add(p.id);
-                      return n;
-                    })}
-                  />
-                  {p.name}
-                </label>
-              ))}
-            </div>
-            <button class="btn primary wide" disabled={picking.size === 0 || creating} onClick={start}>
-              {creating ? "Starting..." : `Start game${picking.size ? ` with ${picking.size + 1} players` : ""}`}
-            </button>
-          </>
-        )}
-      </section>
+      <NewGame api={api} token={token} family={data.family} />
 
       {finished.length > 0 && <Section title="Finished" games={finished} token={token} meId={data.me.id} />}
 
       <p class="muted small center footer-note">
-        Keep this page's link private: it signs you in. Words are checked against Collins (UK/India) and North American word lists.
+        Keep this page's link private: it signs you in. Word Battles checks words against the Collins (UK/India) and North American word lists.
       </p>
     </div>
   );
 }
 
-function Section({ title, games, token, meId }: { title: string; games: GameSummary[]; token: string; meId: string }) {
+function NewGame({ api, token, family }: { api: Api; token: string; family: { id: string; name: string }[] }) {
+  const [kind, setKind] = useState<"words" | "chess">("words");
+  const [picking, setPicking] = useState<Set<string>>(new Set());
+  const [opponent, setOpponent] = useState<string>("");
+  const [level, setLevel] = useState(3);
+  const [color, setColor] = useState<"random" | "w" | "b">("random");
+  const [creating, setCreating] = useState(false);
+
+  const startWords = async () => {
+    setCreating(true);
+    try {
+      const { id } = await api.createGame([...picking]);
+      location.href = `/p/${token}/g/${id}`;
+    } catch (e) { alert((e as Error).message); setCreating(false); }
+  };
+  const startChess = async () => {
+    setCreating(true);
+    try {
+      const { id } = await api.createChess(
+        opponent === "cpu" ? { cpuLevel: level, color } : { opponentId: opponent, color },
+      );
+      location.href = `/p/${token}/c/${id}`;
+    } catch (e) { alert((e as Error).message); setCreating(false); }
+  };
+
+  return (
+    <section class="card">
+      <h2>Start a new game</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected={kind === "words"} class={`tab ${kind === "words" ? "on" : ""}`} onClick={() => setKind("words")}>Word Battles</button>
+        <button role="tab" aria-selected={kind === "chess"} class={`tab ${kind === "chess" ? "on" : ""}`} onClick={() => setKind("chess")}>Chess</button>
+      </div>
+
+      {kind === "words" ? (
+        family.length === 0 ? <p class="muted">No other players yet. Add them on the admin page.</p> : (
+          <>
+            <p class="muted small">Pick 1 to 3 people. The starting order is drawn at random.</p>
+            <div class="pick">
+              {family.map((p) => (
+                <label key={p.id} class={`chip ${picking.has(p.id) ? "on" : ""}`}>
+                  <input type="checkbox" checked={picking.has(p.id)} disabled={!picking.has(p.id) && picking.size >= 3}
+                    onChange={() => setPicking((s) => { const n = new Set(s); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); return n; })} />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+            <button class="btn primary wide" disabled={picking.size === 0 || creating} onClick={startWords}>
+              {creating ? "Starting..." : `Start Word Battle${picking.size ? ` with ${picking.size + 1} players` : ""}`}
+            </button>
+          </>
+        )
+      ) : (
+        <>
+          <p class="muted small">Play against</p>
+          <div class="pick">
+            {family.map((p) => (
+              <label key={p.id} class={`chip ${opponent === p.id ? "on" : ""}`}>
+                <input type="radio" name="opp" checked={opponent === p.id} onChange={() => setOpponent(p.id)} />
+                {p.name}
+              </label>
+            ))}
+            <label class={`chip ${opponent === "cpu" ? "on" : ""}`}>
+              <input type="radio" name="opp" checked={opponent === "cpu"} onChange={() => setOpponent("cpu")} />
+              Computer
+            </label>
+          </div>
+          {opponent === "cpu" && (
+            <label class="field small-field">Computer level: {level} {level <= 2 ? "(gentle)" : level >= 7 ? "(very strong)" : ""}
+              <input type="range" min={1} max={8} value={level} onInput={(e) => setLevel(Number((e.target as HTMLInputElement).value))} />
+            </label>
+          )}
+          <p class="muted small">Your colour</p>
+          <div class="pick">
+            {([["random", "Random"], ["w", "White"], ["b", "Black"]] as const).map(([v, label]) => (
+              <label key={v} class={`chip ${color === v ? "on" : ""}`}>
+                <input type="radio" name="color" checked={color === v} onChange={() => setColor(v)} />
+                {label}
+              </label>
+            ))}
+          </div>
+          <button class="btn primary wide" disabled={!opponent || creating} onClick={startChess}>
+            {creating ? "Starting..." : "Start chess game"}
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Section({ title, games, token, meId }: { title: string; games: AnySummary[]; token: string; meId: string }) {
   return (
     <section>
       <h2 class="section-title">{title}</h2>
       <ul class="games">
-        {games.map((g) => {
-          const others = g.players.filter((p) => p.id !== meId).map((p) => p.name);
-          const turnPlayer = g.players[g.turn];
-          return (
-            <li key={g.id}>
-              <a class={`game-card ${g.myTurn ? "mine" : ""}`} href={`/p/${token}/g/${g.id}`}>
-                <div class="gc-head">
-                  <span class="gc-title">with {others.join(", ")}</span>
-                  <span class={`gc-status ${g.myTurn ? "mine" : ""}`}>
-                    {g.status === "finished"
-                      ? `${g.winners.map((w) => (g.players[w].id === meId ? "You" : g.players[w].name)).join(" & ")} won`
-                      : g.myTurn ? "Your turn" : `${turnPlayer.name}'s turn`}
-                  </span>
-                </div>
-                <div class="gc-scores">
-                  {g.players.map((p, i) => (
-                    <span key={p.id} class={`gc-score ${g.status === "active" && i === g.turn ? "turn" : ""}`}>
-                      {p.id === meId ? "You" : p.name} <b>{p.score}</b>
-                    </span>
-                  ))}
-                </div>
-                {g.lastMove && <div class="gc-last muted small">{g.lastMove} &middot; {relTime(g.updatedAt)}</div>}
-              </a>
-            </li>
-          );
-        })}
+        {games.map((g) => (
+          <li key={g.id}>{g.kind === "chess" ? <ChessCard g={g} token={token} /> : <WordsCard g={g} token={token} meId={meId} />}</li>
+        ))}
       </ul>
     </section>
+  );
+}
+
+function ChessCard({ g, token }: { g: ChessSummary; token: string }) {
+  const attention = g.myTurn || g.pending !== null || g.cpuTurn;
+  const status = g.status === "finished"
+    ? (g.result === "1/2-1/2" ? "Draw" : (g.result === "1-0") === (g.myColor === "w") ? "You won" : `${g.opponent} won`)
+    : g.pending === "draw" ? "Draw offered"
+    : g.pending === "takeback" ? "Takeback asked"
+    : g.myTurn ? "Your move"
+    : g.cpuTurn ? "Computer's move"
+    : `${g.turnName}'s move`;
+  return (
+    <a class={`game-card ${attention ? "mine" : ""}`} href={`/p/${token}/c/${g.id}`}>
+      <div class="gc-head">
+        <span class="gc-title"><span class="kind-icon" aria-hidden="true">&#9822;</span> Chess vs {g.opponent}</span>
+        <span class={`gc-status ${attention && g.status === "active" ? "mine" : ""}`}>{status}</span>
+      </div>
+      <div class="gc-scores">
+        <span>You play <b>{g.myColor === "w" ? "White" : "Black"}</b></span>
+        <span>Move {g.moveNumber}</span>
+      </div>
+      {(g.endText || g.lastMove) && (
+        <div class="gc-last muted small">{g.endText ?? g.lastMove} &middot; {relTime(g.updatedAt)}</div>
+      )}
+    </a>
+  );
+}
+
+function WordsCard({ g, token, meId }: { g: GameSummary; token: string; meId: string }) {
+  const others = g.players.filter((p) => p.id !== meId).map((p) => p.name);
+  const turnPlayer = g.players[g.turn];
+  return (
+    <a class={`game-card ${g.myTurn ? "mine" : ""}`} href={`/p/${token}/g/${g.id}`}>
+      <div class="gc-head">
+        <span class="gc-title"><span class="kind-icon" aria-hidden="true">W</span> Words with {others.join(", ")}</span>
+        <span class={`gc-status ${g.myTurn ? "mine" : ""}`}>
+          {g.status === "finished"
+            ? `${g.winners.map((w) => (g.players[w].id === meId ? "You" : g.players[w].name)).join(" & ")} won`
+            : g.myTurn ? "Your turn" : `${turnPlayer.name}'s turn`}
+        </span>
+      </div>
+      <div class="gc-scores">
+        {g.players.map((p, i) => (
+          <span key={p.id} class={`gc-score ${g.status === "active" && i === g.turn ? "turn" : ""}`}>
+            {p.id === meId ? "You" : p.name} <b>{p.score}</b>
+          </span>
+        ))}
+      </div>
+      {g.lastMove && <div class="gc-last muted small">{g.lastMove} &middot; {relTime(g.updatedAt)}</div>}
+    </a>
   );
 }
 

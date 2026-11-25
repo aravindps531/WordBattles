@@ -1,6 +1,8 @@
 import type { GameView, PlacedTile } from "../shared/engine";
+import type { ChessView, Color } from "../shared/chess";
 
 export interface GameSummary {
+  kind: "words";
   id: string;
   status: "active" | "finished";
   updatedAt: number;
@@ -12,11 +14,34 @@ export interface GameSummary {
   bagCount: number;
 }
 
+export interface ChessSummary {
+  kind: "chess";
+  id: string;
+  status: "active" | "finished";
+  updatedAt: number;
+  opponent: string;
+  myColor: Color | null;
+  myTurn: boolean;
+  turnName: string;
+  cpuTurn: boolean;
+  moveNumber: number;
+  lastMove: string | null;
+  result: string | null;
+  endText: string | null;
+  pending: "draw" | "takeback" | null;
+}
+
+export type AnySummary = GameSummary | ChessSummary;
+
 export interface MeResponse {
   me: { id: string; name: string };
   family: { id: string; name: string }[];
-  games: GameSummary[];
+  games: AnySummary[];
 }
+
+export type ChessAction =
+  | "move" | "cpu-move" | "resign" | "offer-draw" | "accept-draw" | "decline-draw"
+  | "takeback" | "accept-takeback" | "decline-takeback";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -57,6 +82,19 @@ export class Api {
     extra: { tiles?: PlacedTile[]; letters?: string[] } = {}) {
     return this.req<GameView>(`/api/games/${id}/move`, {
       method: "POST", body: JSON.stringify({ version, action, ...extra }),
+    });
+  }
+  createChess(opts: { opponentId?: string; cpuLevel?: number; color: "w" | "b" | "random" }) {
+    return this.req<{ id: string }>("/api/chess", { method: "POST", body: JSON.stringify(opts) });
+  }
+  chess(id: string, since?: number) {
+    return this.req<ChessView | { unchanged: true; version: number }>(
+      `/api/chess/${id}${since !== undefined ? `?since=${since}` : ""}`,
+    );
+  }
+  chessAction(id: string, version: number, action: ChessAction, uci?: string) {
+    return this.req<ChessView>(`/api/chess/${id}/action`, {
+      method: "POST", body: JSON.stringify({ version, action, uci }),
     });
   }
   subscribe(sub: PushSubscriptionJSON) {
