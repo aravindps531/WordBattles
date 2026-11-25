@@ -14,7 +14,7 @@
       "binding": "DB",
       "database_name": "word-battles",
       // Replace with the id printed by: npx wrangler d1 create word-battles
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "dea04d35-e54f-4248-b257-1575e0185397",
       "migrations_dir": "migrations"
     }
   ],
