@@ -20,7 +20,7 @@
   ],
   "vars": {
     // Public half of the VAPID key pair (run: npm run vapid). The private half is a secret.
-    "VAPID_PUBLIC_KEY": ""
+    "VAPID_PUBLIC_KEY": "BGhW57unODWYEQhU6NJHf4ypKmEC9kWNtvzpdDvajepplnqgUwpLKeiUnPWwumS4PZseUL9xFClb3nk1ZA8KYgQ"
   },
   "observability": { "enabled": true }
 }
