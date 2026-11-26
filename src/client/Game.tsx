@@ -179,7 +179,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
   };
 
   const onCell = (r: number, c: number) => {
-    if (!view || swapMode) return;
+    if (!view || swapMode || mySeat === null) return;
     const key = `${r},${c}`;
     const p = pendingAt.get(key);
     if (p) { setPending((ps) => ps.filter((x) => x !== p)); return; }
@@ -301,6 +301,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
         <span class="top-right">
           {rules.variant === "mega" && <span class="mega-tag">Mega</span>}
+          {mySeat === null && <span class="watch-tag">Watching</span>}
           <span class="bag" title="Tiles left in the bag">Bag: <b>{view.bagCount}</b></span>
           {rules.size > 15 && (
             <button class="btn zoom-btn" onClick={() => setZoomed((z) => !z)} aria-pressed={zoomed}>
@@ -308,7 +309,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
             </button>
           )}
           <HowToButton onClick={howTo.show} />
-          <button class="btn chat-btn" onClick={() => setChatOpen(true)}
+          <button class="btn chat-btn" hidden={mySeat === null} onClick={() => setChatOpen(true)}
             aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
             Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
           </button>

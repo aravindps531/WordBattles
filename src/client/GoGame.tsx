@@ -108,7 +108,8 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
   }, [api, view, applyView, refresh]);
 
   const live = ply === null;
-  const myTurn = !!view && view.phase === "play" && view.turn === my;
+  const watching = !!view && view.myColor === null;
+  const myTurn = !!view && !watching && view.phase === "play" && view.turn === my;
   const scoring = view?.phase === "scoring";
 
   const shownBoard = useMemo(() => {
@@ -142,7 +143,7 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
   );
 
   const onBoardClick = (e: MouseEvent) => {
-    if (!view || !live || busy || !svgRef.current) return;
+    if (!view || !live || busy || watching || !svgRef.current) return;
     const rect = svgRef.current.getBoundingClientRect();
     const units = view.size - 1 + PAD * 2;
     const x = ((e.clientX - rect.left) / rect.width) * units - PAD;
@@ -208,7 +209,8 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
         <span class="top-right">
           <span class="muted small">Go {n}&times;{n} &middot; move {view.moves.length + 1}</span>
           <HowToButton onClick={howTo.show} />
-          <button class="btn chat-btn" onClick={() => setChatOpen(true)} aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
+          {watching && <span class="watch-tag">Watching</span>}
+          <button class="btn chat-btn" hidden={watching} onClick={() => setChatOpen(true)} aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
             Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
           </button>
         </span>
@@ -222,7 +224,12 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
         }} />
       )}
 
-      {view.phase === "finished" ? (
+      {watching ? (
+        <div class="banner watching">
+          <strong>{view.black.name} (Black) vs {view.white.name} (White)</strong>
+          <span class="sub">{view.phase === "finished" ? describeGoEnd(view) : scoring ? "Counting the score." : `${playerOf(view, view.turn).name} to move.`}</span>
+        </div>
+      ) : view.phase === "finished" ? (
         <div class={`banner done ${youWon ? "won" : ""}`}>
           <strong>{youWon ? "You won!" : `${theirName} won.`}</strong>
           <span class="sub">{describeGoEnd(view)}</span>
@@ -244,14 +251,14 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
         </div>
       )}
 
-      {view.phase === "play" && view.takeback === opp && (
+      {!watching && view.phase === "play" && view.takeback === opp && (
         <div class="offer">
           <span>{theirName} asks to take back their last move.</span>
           <button class="btn" disabled={busy} onClick={() => act("decline-takeback")}>Refuse</button>
           <button class="btn primary" disabled={busy} onClick={() => act("accept-takeback")}>Allow</button>
         </div>
       )}
-      {view.phase === "play" && view.takeback === my && <p class="offer-note muted small">You asked to take back your move. Waiting for {theirName}.</p>}
+      {!watching && view.phase === "play" && view.takeback === my && <p class="offer-note muted small">You asked to take back your move. Waiting for {theirName}.</p>}
 
       <div class="board-wrap">
         <div class="chess-col">
@@ -299,7 +306,7 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
       </div>
 
       <div class="panel">
-        {scoring ? (
+        {scoring && !watching ? (
           <>
             {score && (
               <p class="score-line">
@@ -351,7 +358,7 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
         </div>
         {view.moves.length > 0 && <p class="muted small">Last move {relTime(view.moves[view.moves.length - 1].at)}.</p>}
 
-        {view.phase === "play" && (
+        {view.phase === "play" && !watching && (
           <div class="chess-actions">
             <button class="btn" disabled={!myTurn || busy}
               onClick={() => { if (confirm(`Pass? If ${theirName} passes too, the game will be counted.`)) act("pass"); }}>Pass</button>
@@ -360,7 +367,7 @@ export function GoPage({ api, token, gameId }: { api: Api; token: string; gameId
             <button class="btn" disabled={busy} onClick={() => { if (confirm("Resign this game?")) act("resign"); }}>Resign</button>
           </div>
         )}
-        {view.phase !== "finished" && (
+        {view.phase !== "finished" && !watching && (
           <>
             <label class="setting">
               <input type="checkbox" checked={confirmMoves} onChange={(e) => {

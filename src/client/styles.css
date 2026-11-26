@@ -478,3 +478,11 @@ input {
 .board-wrap.big.zoomed { overflow: auto; max-height: 62dvh; justify-content: flex-start; -webkit-overflow-scrolling: touch; border-radius: 6px; }
 .board-wrap.big.zoomed .board { --size: calc(var(--n) * 30px); flex: none; }
 .rack-slot { --c: min(calc(88vw / var(--rack, 7)), 60px); }
+
+/* ---------- watch mode */
+[hidden] { display: none !important; }
+.watch-tag { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; background: #2f5d8a; color: #fff; padding: 2px 8px; border-radius: 99px; }
+.banner.watching { background: #e6eef7; color: #1f3d5c; }
+.game-card.watch { background: #f4f7fb; }
+.family-section summary { cursor: pointer; list-style: none; }
+.family-section summary::-webkit-details-marker { display: none; }

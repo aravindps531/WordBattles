@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { Api, type AnySummary, type ChessSummary, type GameSummary, type GoSummary, type MeResponse, type SeaSummary } from "./api";
+import { Api, type AnySummary, type ChessSummary, type GameSummary, type GoSummary, type MeResponse, type SeaSummary, type WatchSummary } from "./api";
 import { enablePush, isIOS, isStandalone, pushState, syncSubscription, type PushState } from "./push";
 
 function relTime(ts: number): string {
@@ -57,6 +57,8 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
       {active.length === 0 && <p class="muted">No games in progress. Start one below.</p>}
 
       <NewGame api={api} token={token} family={data.family} />
+
+      {(data.familyGames?.length ?? 0) > 0 && <FamilyGames games={data.familyGames!} token={token} />}
 
       {finished.length > 0 && <Section title="Finished" games={finished} token={token} meId={data.me.id} />}
 
@@ -288,6 +290,40 @@ function Section({ title, games, token, meId }: { title: string; games: AnySumma
         ))}
       </ul>
     </section>
+  );
+}
+
+const KIND_LABEL = { words: "Word Battle", chess: "Chess", go: "Go", sea: "Sea Battle" } as const;
+const KIND_PATH = { words: "g", chess: "c", go: "go", sea: "sea" } as const;
+
+function FamilyGames({ games, token }: { games: WatchSummary[]; token: string }) {
+  const active = games.filter((g) => g.status === "active");
+  const finished = games.filter((g) => g.status === "finished");
+  return (
+    <details class="family-section" open>
+      <summary><h2 class="section-title">Family games to watch ({games.length}) &#9662;</h2></summary>
+      <ul class="games">
+        {[...active, ...finished].map((g) => (
+          <li key={g.id}>
+            <a class="game-card watch" href={`/p/${token}/${KIND_PATH[g.kind]}/${g.id}`}>
+              <div class="gc-head">
+                <span class="gc-title">{g.variant === "mega" ? "Mega Word Battle" : KIND_LABEL[g.kind]}: {g.title}</span>
+                <span class="gc-status">{g.status === "finished" ? "Finished" : "Watch"}</span>
+              </div>
+              {g.scores && (
+                <div class="gc-scores">
+                  {g.scores.map((s) => <span key={s.name}>{s.name} <b>{s.score}</b></span>)}
+                </div>
+              )}
+              <div class="gc-last muted small">
+                {g.endText ?? (g.status === "active" ? `${g.turnName}${g.turnName === "Counting" || g.turnName === "Placing ships" ? "" : "'s turn"}` : "")}
+                {g.lastMove && !g.endText ? ` \u00b7 ${g.lastMove}` : ""} &middot; {relTime(g.updatedAt)}
+              </div>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

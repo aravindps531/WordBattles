@@ -2,6 +2,10 @@
 
 Private family games built to be played a few moves a day across time zones: **Word Battles** (2 to 4 players), **Chess** (against family or the computer), **Go** and **Sea Battle**. Each game has a "How to play" guide that opens the first time (players can hide it; the ? button brings it back).
 
+## Watching
+
+Every family member can watch games they aren't playing in ("Family games to watch" on the home screen: active games plus those finished in the last 14 days). Watchers get a read-only view: never anyone's tiles, never unsunk Sea Battle ships, and not the players' private chat. The server enforces this; watchers can't make moves.
+
 ## Word Battles
 
 

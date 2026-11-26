@@ -324,6 +324,29 @@ export function seaViewFor(g: SeaState, playerId: string, id: string, version: n
   };
 }
 
+/**
+ * Read-only view for someone watching who isn't playing. Shown from the first
+ * player's side, with BOTH fleets hidden except sunk ships until the game ends.
+ */
+export function seaSpectatorView(g: SeaState, id: string, version: number): SeaView & { spectator: true } {
+  const reveal = (seat: 0 | 1) => {
+    const fleet = g.fleets[seat] ?? [];
+    if (g.phase === "finished") return fleet;
+    const sunk = sunkShips(g, seat);
+    return fleet.filter((s) => sunk.has(s.key));
+  };
+  return {
+    id, version, kind: "sea", size: g.size, mySeat: 0, me: g.players[0], them: g.players[1],
+    phase: g.phase, myTurn: false, shotsAllowed: 0, lastChance: g.lastChance, iAmFirst: g.first === 0,
+    myFleet: g.fleets[0] ? reveal(0) : null,
+    theirFleetPlaced: !!g.fleets[1],
+    theirShips: reveal(1),
+    salvos: g.salvos,
+    result: g.result,
+    spectator: true,
+  };
+}
+
 export function describeSeaEnd(g: SeaState): string {
   if (!g.result) return "";
   if (g.result.winner === null) return "Draw: both fleets were sunk with equal turns.";

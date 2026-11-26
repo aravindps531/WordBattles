@@ -184,3 +184,23 @@ describe("computer", () => {
     expect(shots.some((p) => [1, 3, 12].includes(p))).toBe(true);
   });
 });
+
+describe("watching", () => {
+  it("watchers never see unsunk ships of either player", async () => {
+    const { seaSpectatorView, createSeaGame: create, placeFleet: place, fire: shoot, resign: quit } = await import("../src/shared/seabattle");
+    const g = create({ id: "a", name: "A" }, { id: "k", name: "K" }, 10, () => 0);
+    g.first = 0;
+    const fleet = FLEETS[10].map((s, i) => ({ key: s.key, r: i * 2, c: 0, dir: "h" as const }));
+    place(g, 0, fleet);
+    place(g, 1, fleet);
+    shoot(g, 0, [80, 81, 99, 98, 97]); // sinks K's destroyer
+    const v = seaSpectatorView(g, "x", 1);
+    expect(v.theirShips.map((s) => s.key)).toEqual(["destroyer"]);
+    expect(v.myFleet).toEqual([]);
+    expect(v.myTurn).toBe(false);
+    quit(g, 1);
+    const end = seaSpectatorView(g, "x", 2);
+    expect(end.myFleet).toHaveLength(5);
+    expect(end.theirShips).toHaveLength(5);
+  });
+});

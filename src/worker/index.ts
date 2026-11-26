@@ -216,6 +216,52 @@ function seaSummary(row: GameRow, g: Sea.SeaState, playerId: string) {
   };
 }
 
+/** A short description of any game, for people watching rather than playing. */
+function watchSummary(row: GameRow) {
+  const parsed = JSON.parse(row.state) as GameState | ChessState | Go.GoState | Sea.SeaState;
+  const base = { id: row.id, updatedAt: row.updated_at };
+  if ((parsed as ChessState).kind === "chess") {
+    const g = parsed as ChessState;
+    const last = g.moves[g.moves.length - 1];
+    return {
+      ...base, kind: "chess" as const, title: `${g.white.name} vs ${g.black.name}`,
+      status: g.status, turnName: sideOf(g, turnOf(g)).name,
+      lastMove: last ? `${sideOf(g, g.moves.length % 2 === 1 ? "w" : "b").name} played ${last.san}` : null,
+      endText: g.status === "finished" ? describeChessEnd(g) : null,
+    };
+  }
+  if ((parsed as Go.GoState).kind === "go") {
+    const g = parsed as Go.GoState;
+    const last = g.moves[g.moves.length - 1];
+    return {
+      ...base, kind: "go" as const, title: `${g.black.name} vs ${g.white.name} (${g.size}x${g.size})`,
+      status: g.phase === "finished" ? "finished" : "active", turnName: g.phase === "scoring" ? "Counting" : Go.playerOf(g, Go.turnOf(g)).name,
+      lastMove: last ? `${Go.playerOf(g, last.color).name} ${last.point === null ? "passed" : `played ${Go.pointName(g.size, last.point)}`}` : null,
+      endText: g.phase === "finished" ? Go.describeGoEnd(g) : null,
+    };
+  }
+  if ((parsed as Sea.SeaState).kind === "sea") {
+    const g = parsed as Sea.SeaState;
+    const last = g.salvos[g.salvos.length - 1];
+    return {
+      ...base, kind: "sea" as const, title: `${g.players[0].name} vs ${g.players[1].name}`,
+      status: g.phase === "finished" ? "finished" : "active",
+      turnName: g.phase === "setup" ? "Placing ships" : g.players[Sea.shooterOf(g)].name,
+      lastMove: last ? `${g.players[last.by].name} fired ${last.shots.length}, ${last.shots.filter((x) => x.hit).length} hit` : null,
+      endText: g.phase === "finished" ? Sea.describeSeaEnd(g) : null,
+    };
+  }
+  const g = parsed as GameState;
+  const last = g.moves[g.moves.length - 1];
+  return {
+    ...base, kind: "words" as const, variant: g.variant ?? "standard", title: g.names.join(", "),
+    status: g.status, turnName: g.names[g.turn],
+    scores: g.seats.map((_, i) => ({ name: g.names[i], score: g.scores[i] })),
+    lastMove: last ? describeMove(g, last) : null,
+    endText: g.status === "finished" ? `${g.end!.winners.map((w) => g.names[w]).join(" & ")} won.` : null,
+  };
+}
+
 function summary(row: GameRow, playerId: string) {
   const parsed = JSON.parse(row.state) as GameState | ChessState | Go.GoState | Sea.SeaState;
   if ((parsed as Sea.SeaState).kind === "sea") return seaSummary(row, parsed as Sea.SeaState, playerId);
@@ -321,10 +367,18 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
         GROUP BY m.game_id`,
     ).bind(me.id).all<{ game_id: string; n: number }>();
     const unreadBy = new Map(unread.results.map((u) => [u.game_id, u.n]));
+    // Other family members' games, to watch: active ones plus anything finished in the last 14 days.
+    const familyGames = await env.DB.prepare(
+      `SELECT id, state, version, status, updated_at, kind FROM games
+        WHERE id NOT IN (SELECT game_id FROM game_players WHERE player_id = ?)
+          AND (status = 'active' OR updated_at > ?)
+        ORDER BY updated_at DESC LIMIT 30`,
+    ).bind(me.id, Date.now() - 14 * 86400000).all<GameRow>();
     return json({
       me: { id: me.id, name: me.name },
       family: others.results,
       games: results.map((r) => ({ ...summary(r, me.id), unreadChat: unreadBy.get(r.id) ?? 0 })),
+      familyGames: familyGames.results.map(watchSummary),
     });
   }
 
@@ -364,7 +418,6 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
     const g = JSON.parse(row.state) as GameState;
     if ((g as unknown as { kind?: string }).kind) throw new HttpError(404, "Game not found.");
-    if (!g.seats.includes(me.id)) throw new HttpError(403, "You are not in this game.");
     return json(viewFor(g, me.id, row.id, row.version));
   }
 
@@ -598,8 +651,7 @@ async function handleChess(req: Request, env: Env, ctx: ExecutionContext, url: U
     if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
     const g = JSON.parse(row.state) as ChessState;
     if (g.kind !== "chess") throw new HttpError(404, "Game not found.");
-    if (!colorOf(g, me.id)) throw new HttpError(403, "You are not in this game.");
-    return json(chessViewFor(g, me.id, row.id, row.version));
+    return json(chessViewFor(g, me.id, row.id, row.version)); // non-players get a read-only view
   }
 
   m = /^\/api\/chess\/([\w-]+)\/action$/.exec(path);
@@ -719,8 +771,7 @@ async function handleGo(req: Request, env: Env, ctx: ExecutionContext, url: URL,
     if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
     const g = JSON.parse(row.state) as Go.GoState;
     if (g.kind !== "go") throw new HttpError(404, "Game not found.");
-    if (!Go.colorOf(g, me.id)) throw new HttpError(403, "You are not in this game.");
-    return json(Go.goViewFor(g, me.id, row.id, row.version));
+    return json(Go.goViewFor(g, me.id, row.id, row.version)); // non-players get a read-only view
   }
 
   m = /^\/api\/go\/([\w-]+)\/action$/.exec(path);
@@ -858,7 +909,8 @@ async function handleSea(req: Request, env: Env, ctx: ExecutionContext, url: URL
     if (since !== null && Number(since) === row.version) return json({ unchanged: true, version: row.version });
     const g = JSON.parse(row.state) as Sea.SeaState;
     if (g.kind !== "sea") throw new HttpError(404, "Game not found.");
-    if (Sea.seatOf(g, me.id) === null) throw new HttpError(403, "You are not in this game.");
+    // Non-players get a watcher's view with both fleets hidden.
+    if (Sea.seatOf(g, me.id) === null) return json(Sea.seaSpectatorView(g, row.id, row.version));
     return json(Sea.seaViewFor(g, me.id, row.id, row.version));
   }
 

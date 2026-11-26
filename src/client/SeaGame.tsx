@@ -100,6 +100,7 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
   }, [refresh]);
 
   const vsCpu = !!view && "cpu" in view.them;
+  const watching = !!view && "spectator" in view;
   const meId = view && !("cpu" in view.me) ? view.me.id : null;
   const chat = useChat(api, gameId, meId, chatOpen && !vsCpu);
   const size = (view?.size ?? 10) as 8 | 10;
@@ -214,7 +215,8 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
         <span class="top-right">
           <span class="muted small">Sea Battle {size}&times;{size}</span>
           <HowToButton onClick={howTo.show} />
-          {!vsCpu && (
+          {watching && <span class="watch-tag">Watching</span>}
+          {!vsCpu && !watching && (
             <button class="btn chat-btn" onClick={() => setChatOpen(true)} aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
               Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
             </button>
@@ -232,7 +234,7 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
   );
 
   // ---------------------------------------------------------------- setup screen
-  if (view.phase === "setup" && !view.myFleet) {
+  if (view.phase === "setup" && !view.myFleet && !watching) {
     const allPlaced = specs.every((sp) => draft.some((s) => s.key === sp.key));
     return (
       <div class="game sea">
@@ -268,7 +270,7 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
   }
 
   // ---------------------------------------------------------------- battle / waiting / finished
-  const canAim = view.phase === "battle" && view.myTurn && !busy;
+  const canAim = !watching && view.phase === "battle" && view.myTurn && !busy;
   const toggleAim = (p: number) => {
     if (!canAim || myShots.has(p)) return;
     setAims((a) => (a.includes(p) ? a.filter((x) => x !== p) : a.length < view.shotsAllowed ? [...a, p] : a));
@@ -286,17 +288,23 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
   );
 
   const salvoText = (s: Salvo, i: number) => {
-    const who = s.by === view.mySeat ? "You" : theirName;
+    const who = watching ? (s.by === 0 ? view.me.name : theirName) : s.by === view.mySeat ? "You" : theirName;
     const hits = s.shots.filter((x) => x.hit).length;
     const sunk = s.shots.filter((x) => x.sunk).map((x) => specOf(size, x.sunk!).name);
     return `${i + 1}. ${who}: ${s.shots.length} shot${s.shots.length === 1 ? "" : "s"}, ${hits} hit${hits === 1 ? "" : "s"}`
-      + (sunk.length ? ` — sank ${s.by === view.mySeat ? "the" : "your"} ${sunk.join(" and ")}` : "");
+      + (sunk.length ? ` — sank ${watching || s.by === view.mySeat ? "the" : "your"} ${sunk.join(" and ")}` : "");
   };
 
   return (
     <div class="game sea">
       {header}
-      {view.phase === "finished" ? (
+      {watching ? (
+        <div class="banner watching">
+          <strong>{view.me.name} vs {theirName}</strong>
+          <span class="sub">{view.phase === "finished" ? (result?.winner === null ? "Draw." : `${(result?.winner === 0 ? view.me : view.them).name} won.`)
+            : view.phase === "setup" ? "Players are placing their ships." : `${(view.salvos.length % 2 === 0) === view.iAmFirst ? view.me.name : theirName} to fire.`}</span>
+        </div>
+      ) : view.phase === "finished" ? (
         <div class={`banner done ${iWon ? "won" : ""}`}>
           <strong>{result?.winner === null ? "It's a draw!" : iWon ? "You won!" : `${theirName} won.`}</strong>
           <span class="sub">{result?.reason === "resigned" ? (iWon ? `${theirName} resigned.` : "You resigned.") : result?.winner === null ? "Both fleets sank with equal turns." : "All ships sunk."}</span>
@@ -334,13 +342,13 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
           {view.phase !== "setup" && fleetStatus(sunkTheirs, "Their fleet:")}
         </div>
         <div class="sea-col mine">
-          <h3 class="grid-title">Your fleet</h3>
+          <h3 class="grid-title">{watching ? `${view.me.name}'s waters` : "Your fleet"}</h3>
           <Grid size={size} small label="Your fleet" cells={(p) => {
             const shot = theirShots.get(p);
             const cls = [myOcc.has(p) ? "ship" : "", shot ? (shot.hit ? "hit" : "miss") : "", lastTheirs.has(p) ? "recent" : ""].join(" ");
             return { cls, content: shot ? (shot.hit ? "✕" : "•") : "" };
           }} />
-          {view.phase !== "setup" && fleetStatus(sunkMine, "Your fleet:")}
+          {view.phase !== "setup" && fleetStatus(sunkMine, watching ? `${view.me.name}'s fleet:` : "Your fleet:")}
         </div>
       </div>
 
@@ -364,7 +372,7 @@ export function SeaPage({ api, token, gameId }: { api: Api; token: string; gameI
             </ul>
           </details>
         )}
-        {view.phase !== "finished" && (
+        {view.phase !== "finished" && !watching && (
           <p class="leave">
             <button class="link-btn" onClick={() => { if (confirm("Resign this game?")) send("resign"); }}>Resign</button>
           </p>

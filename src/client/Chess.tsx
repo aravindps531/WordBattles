@@ -145,8 +145,9 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
   const oppSide = view ? (opp === "w" ? view.white : view.black) : null;
   const vsCpu = !!oppSide && isCpu(oppSide);
   const live = ply === null;
-  const myTurn = !!view && view.status === "active" && view.turn === my;
-  const cpuTurn = !!view && view.status === "active" && vsCpu && view.turn === opp;
+  const watching = !!view && view.myColor === null;
+  const myTurn = !!view && !watching && view.status === "active" && view.turn === my;
+  const cpuTurn = !!view && !watching && view.status === "active" && vsCpu && view.turn === opp;
   const mySide = view ? (my === "w" ? view.white : view.black) : null;
   const meId = mySide && !isCpu(mySide) ? mySide.id : null;
   const [chatOpen, setChatOpen] = useState(() => new URLSearchParams(location.search).has("chat"));
@@ -319,7 +320,8 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
         <span class="top-right">
           <span class="muted small">Move {Math.floor(view.moves.length / 2) + 1}</span>
           <HowToButton onClick={howTo.show} />
-          {!vsCpu && (
+          {watching && <span class="watch-tag">Watching</span>}
+          {!vsCpu && !watching && (
             <button class="btn chat-btn" onClick={() => setChatOpen(true)}
               aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
               Chat{chat.unread > 0 && <span class="badge">{chat.unread}</span>}
@@ -336,7 +338,12 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
         }} />
       )}
 
-      {view.status === "finished" ? (
+      {watching ? (
+        <div class="banner watching">
+          <strong>{view.white.name} (White) vs {view.black.name} (Black)</strong>
+          <span class="sub">{view.status === "finished" ? describeChessEnd(view) : `${(view.turn === "w" ? view.white : view.black).name} to move.`}</span>
+        </div>
+      ) : view.status === "finished" ? (
         <div class={`banner done ${youWon ? "won" : ""}`}>
           <strong>{view.result === "1/2-1/2" ? "Draw." : youWon ? "You won!" : `${theirName} won.`}</strong>
           <span class="sub">{describeChessEnd(view)}</span>
@@ -353,22 +360,22 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
         </div>
       )}
 
-      {view.status === "active" && view.drawOffer === opp && (
+      {!watching && view.status === "active" && view.drawOffer === opp && (
         <div class="offer">
           <span>{theirName} offers a draw.</span>
           <button class="btn" disabled={busy} onClick={() => act("decline-draw")}>Decline</button>
           <button class="btn primary" disabled={busy} onClick={() => act("accept-draw")}>Accept draw</button>
         </div>
       )}
-      {view.status === "active" && view.takeback === opp && (
+      {!watching && view.status === "active" && view.takeback === opp && (
         <div class="offer">
           <span>{theirName} asks to take back their last move.</span>
           <button class="btn" disabled={busy} onClick={() => act("decline-takeback")}>Refuse</button>
           <button class="btn primary" disabled={busy} onClick={() => act("accept-takeback")}>Allow</button>
         </div>
       )}
-      {view.status === "active" && view.drawOffer === my && <p class="offer-note muted small">You offered a draw. Waiting for {theirName}.</p>}
-      {view.status === "active" && view.takeback === my && <p class="offer-note muted small">You asked to take back your move. Waiting for {theirName}.</p>}
+      {!watching && view.status === "active" && view.drawOffer === my && <p class="offer-note muted small">You offered a draw. Waiting for {theirName}.</p>}
+      {!watching && view.status === "active" && view.takeback === my && <p class="offer-note muted small">You asked to take back your move. Waiting for {theirName}.</p>}
 
       <div class="board-wrap">
         <div class="chess-col">
@@ -457,7 +464,7 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
           </section>
         )}
 
-        {view.status === "active" && (
+        {view.status === "active" && !watching && (
           <div class="chess-actions">
             {vsCpu ? null : (
               <button class="btn" disabled={busy || view.drawOffer === my} onClick={() => act("offer-draw")}>Offer draw</button>
@@ -468,7 +475,7 @@ export function ChessPage({ api, token, gameId }: { api: Api; token: string; gam
             <button class="btn" disabled={busy} onClick={() => { if (confirm("Resign this game?")) act("resign"); }}>Resign</button>
           </div>
         )}
-        <label class="setting">
+        <label class="setting" hidden={watching}>
           <input type="checkbox" checked={confirmMoves} onChange={(e) => {
             const v = (e.target as HTMLInputElement).checked; setConfirmMoves(v); writeBool(CONFIRM_KEY, v);
           }} />

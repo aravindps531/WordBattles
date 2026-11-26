@@ -78,10 +78,24 @@ export type AnySummary = (GameSummary | ChessSummary | GoSummary | SeaSummary) &
 
 export interface ChatMessage { id: number; playerId: string; name: string; body: string; at: number }
 
+export interface WatchSummary {
+  id: string;
+  kind: "words" | "chess" | "go" | "sea";
+  variant?: "standard" | "mega";
+  title: string;
+  status: "active" | "finished";
+  turnName: string;
+  scores?: { name: string; score: number }[];
+  lastMove: string | null;
+  endText: string | null;
+  updatedAt: number;
+}
+
 export interface MeResponse {
   me: { id: string; name: string };
   family: { id: string; name: string }[];
   games: AnySummary[];
+  familyGames?: WatchSummary[];
 }
 
 export type ChessAction =

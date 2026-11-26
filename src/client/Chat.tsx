@@ -36,6 +36,7 @@ export function useChat(api: Api, gameId: string, meId: string | null, open: boo
   const lastIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    if (!meId) return; // watchers can't read a game's private chat
     try {
       const r = await api.chatMessages(gameId, lastIdRef.current);
       if (r.messages.length) {
@@ -47,7 +48,7 @@ export function useChat(api: Api, gameId: string, meId: string | null, open: boo
       }
       setLastReadId((x) => Math.max(x, r.lastReadId));
     } catch { /* offline: try again on the next poll */ }
-  }, [api, gameId]);
+  }, [api, gameId, meId]);
 
   useEffect(() => {
     load();
