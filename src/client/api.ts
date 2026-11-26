@@ -5,6 +5,7 @@ import type { SeaCpu, SeaView, Ship } from "../shared/seabattle";
 
 export interface GameSummary {
   kind: "words";
+  variant?: "standard" | "mega";
   id: string;
   status: "active" | "finished";
   updatedAt: number;
@@ -119,8 +120,8 @@ export class Api {
       `/api/games/${id}${since !== undefined ? `?since=${since}` : ""}`,
     );
   }
-  createGame(playerIds: string[]) {
-    return this.req<{ id: string }>("/api/games", { method: "POST", body: JSON.stringify({ playerIds }) });
+  createGame(playerIds: string[], variant: "standard" | "mega" = "standard") {
+    return this.req<{ id: string }>("/api/games", { method: "POST", body: JSON.stringify({ playerIds, variant }) });
   }
   move(id: string, version: number, action: "play" | "pass" | "exchange" | "resign",
     extra: { tiles?: PlacedTile[]; letters?: string[] } = {}) {

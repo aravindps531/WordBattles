@@ -70,6 +70,7 @@ export function HomePage({ api, token }: { api: Api; token: string }) {
 function NewGame({ api, token, family }: { api: Api; token: string; family: { id: string; name: string }[] }) {
   const [kind, setKind] = useState<"words" | "chess" | "go" | "sea">("words");
   const [seaSize, setSeaSize] = useState<8 | 10>(10);
+  const [wordVariant, setWordVariant] = useState<"standard" | "mega">("standard");
   const [seaCpu, setSeaCpu] = useState<"easy" | "smart">("easy");
   const [goSize, setGoSize] = useState<9 | 13>(9);
   const [handicap, setHandicap] = useState(0);
@@ -83,7 +84,7 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
   const startWords = async () => {
     setCreating(true);
     try {
-      const { id } = await api.createGame([...picking]);
+      const { id } = await api.createGame([...picking], wordVariant);
       location.href = `/p/${token}/g/${id}`;
     } catch (e) { alert((e as Error).message); setCreating(false); }
   };
@@ -129,6 +130,18 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
       {kind === "words" ? (
         family.length === 0 ? <p class="muted">No other players yet. Add them on the admin page.</p> : (
           <>
+            <p class="muted small">Board</p>
+            <div class="pick">
+              {([["standard", "Standard 15\u00d715"], ["mega", "Mega 21\u00d721"]] as const).map(([v, label]) => (
+                <label key={v} class={`chip ${wordVariant === v ? "on" : ""}`}>
+                  <input type="radio" name="wvar" checked={wordVariant === v} onChange={() => setWordVariant(v)} />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {wordVariant === "mega" && (
+              <p class="muted small">Mega: 225 tiles, 8-tile racks, quadruple squares. Games run about twice as long; best for 3 to 4 players and on tablets.</p>
+            )}
             <p class="muted small">Pick 1 to 3 people. The starting order is drawn at random.</p>
             <div class="pick">
               {family.map((p) => (
@@ -140,7 +153,7 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
               ))}
             </div>
             <button class="btn primary wide" disabled={picking.size === 0 || creating} onClick={startWords}>
-              {creating ? "Starting..." : `Start Word Battle${picking.size ? ` with ${picking.size + 1} players` : ""}`}
+              {creating ? "Starting..." : `Start ${wordVariant === "mega" ? "Mega " : ""}Word Battle${picking.size ? ` with ${picking.size + 1} players` : ""}`}
             </button>
           </>
         )
@@ -357,7 +370,7 @@ function WordsCard({ g, token, meId }: { g: GameSummary & { unreadChat?: number 
   return (
     <a class={`game-card ${g.myTurn ? "mine" : ""}`} href={`/p/${token}/g/${g.id}`}>
       <div class="gc-head">
-        <span class="gc-title"><span class="kind-icon" aria-hidden="true">W</span> Words with {others.join(", ")}</span>
+        <span class="gc-title"><span class="kind-icon" aria-hidden="true">{g.variant === "mega" ? "M" : "W"}</span> {g.variant === "mega" ? "Mega words" : "Words"} with {others.join(", ")}</span>
         <span class={`gc-status ${g.myTurn ? "mine" : ""}`}>
           {g.status === "finished"
             ? `${g.winners.map((w) => (g.players[w].id === meId ? "You" : g.players[w].name)).join(" & ")} won`

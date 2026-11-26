@@ -51,6 +51,7 @@ export function WordsHowTo() {
       <li><b>Blank tiles</b> can be any letter and score 0.</li>
       <li>Not happy with your letters? <b>Swap</b> some (only while the bag has 7 or more) or <b>Pass</b>.</li>
       <li><b>End:</b> when someone uses their last tile and the bag is empty, or after 6 turns in a row with no score. Leftover tiles count against you.</li>
+      <li><b>Mega Word Battle</b> is the big-board version: 21×21 squares, 225 tiles (5 blanks), 8 tiles on your rack, and quadruple squares (4L, 4W). Using all 8 tiles earns 50 extra points. On a phone, use <b>Zoom</b> and scroll to move around the board.</li>
     </ul>
   );
 }

@@ -1,6 +1,5 @@
 import {
-  BINGO_BONUS, BLANK, BOARD_SIZE, CENTER, PREMIUMS, RACK_SIZE,
-  SCORELESS_TURN_LIMIT, TILE_POINTS, fullBag,
+  bagFor, BLANK, rulesFor, SCORELESS_TURN_LIMIT, TILE_POINTS, type Rules, type Variant,
 } from "./constants";
 
 /** A tile on the board. `b` marks a blank standing in for letter `l`. */
@@ -34,6 +33,7 @@ export interface EndSummary {
 
 export interface GameState {
   v: 1;
+  variant?: Variant;        // absent = standard (games created before Mega existed)
   seats: string[];          // player ids, in turn order
   names: string[];          // display names, by seat
   board: Board;
@@ -54,16 +54,16 @@ export class MoveError extends Error {}
 
 // ---------------------------------------------------------------- board utils
 
-export function emptyBoard(): Board {
-  return Array.from({ length: BOARD_SIZE }, () => Array<Cell | null>(BOARD_SIZE).fill(null));
+export function emptyBoard(size = 15): Board {
+  return Array.from({ length: size }, () => Array<Cell | null>(size).fill(null));
 }
 
 export function isBoardEmpty(board: Board): boolean {
   return board.every((row) => row.every((c) => c === null));
 }
 
-function inBounds(r: number, c: number) {
-  return r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE;
+export function rulesOf(g: { variant?: Variant }): Rules {
+  return rulesFor(g.variant);
 }
 
 export function shuffle<T>(arr: T[], rng: Rng): T[] {
@@ -97,9 +97,11 @@ export interface PlacementResult {
  * their scores. Does NOT check words against the dictionary.
  * Throws MoveError with a player-friendly message when the placement is illegal.
  */
-export function evaluatePlacement(board: Board, tiles: PlacedTile[]): PlacementResult {
+export function evaluatePlacement(board: Board, tiles: PlacedTile[], rules: Rules = rulesFor("standard")): PlacementResult {
+  const size = board.length;
+  const inBounds = (r: number, c: number) => r >= 0 && r < size && c >= 0 && c < size;
   if (tiles.length === 0) throw new MoveError("Place at least one tile.");
-  if (tiles.length > RACK_SIZE) throw new MoveError("Too many tiles.");
+  if (tiles.length > rules.rackSize) throw new MoveError("Too many tiles.");
 
   const placed = new Map<string, PlacedTile>();
   for (const t of tiles) {
@@ -143,7 +145,7 @@ export function evaluatePlacement(board: Board, tiles: PlacedTile[]): PlacementR
 
   const first = isBoardEmpty(board);
   if (first) {
-    if (!placed.has(`${CENTER},${CENTER}`)) {
+    if (!placed.has(`${rules.center},${rules.center}`)) {
       throw new MoveError("The first word must cover the centre star.");
     }
   } else {
@@ -167,11 +169,13 @@ export function evaluatePlacement(board: Board, tiles: PlacedTile[]): PlacementR
       const isNew = placed.has(`${r},${c}`);
       let pts = cell.b ? 0 : TILE_POINTS[cell.l];
       if (isNew) {
-        const p = PREMIUMS[r][c];
+        const p = rules.premiums[r][c];
         if (p === "DL") pts *= 2;
         else if (p === "TL") pts *= 3;
+        else if (p === "QL") pts *= 4;
         else if (p === "DW") mult *= 2;
         else if (p === "TW") mult *= 3;
+        else if (p === "QW") mult *= 4;
       }
       sum += pts;
       letters += cell.l;
@@ -198,14 +202,15 @@ export function evaluatePlacement(board: Board, tiles: PlacedTile[]): PlacementR
   }
   if (words.length === 0) throw new MoveError("A word must be at least two letters long.");
 
-  const bingo = tiles.length === RACK_SIZE;
-  const score = words.reduce((s, w) => s + w.score, 0) + (bingo ? BINGO_BONUS : 0);
+  const bingo = tiles.length === rules.rackSize;
+  const score = words.reduce((s, w) => s + w.score, 0) + (bingo ? rules.bingoBonus : 0);
   return { words, score, bingo };
 }
 
 // ------------------------------------------------------------- game lifecycle
 
-export function createGame(players: { id: string; name: string }[], rng: Rng): GameState {
+export function createGame(players: { id: string; name: string }[], rng: Rng, variant: Variant = "standard"): GameState {
+  const rules = rulesFor(variant);
   if (players.length < 2 || players.length > 4) {
     throw new MoveError("A game needs 2 to 4 players.");
   }
@@ -213,13 +218,14 @@ export function createGame(players: { id: string; name: string }[], rng: Rng): G
     throw new MoveError("Each player can only be in a game once.");
   }
   const order = shuffle([...players], rng); // random starting order
-  const bag = shuffle(fullBag(), rng);
-  const racks = order.map(() => bag.splice(0, RACK_SIZE));
+  const bag = shuffle(bagFor(rules), rng);
+  const racks = order.map(() => bag.splice(0, rules.rackSize));
   return {
     v: 1,
+    ...(variant === "standard" ? {} : { variant }),
     seats: order.map((p) => p.id),
     names: order.map((p) => p.name),
-    board: emptyBoard(),
+    board: emptyBoard(rules.size),
     bag,
     racks,
     scores: order.map(() => 0),
@@ -307,7 +313,8 @@ export function applyPlay(g: GameState, seat: number, tiles: PlacedTile[], opts:
     r: t.r, c: t.c, l: String(t.l ?? "").toUpperCase(), ...(t.b ? { b: true } : {}),
   }));
   const rackAfter = takeFromRack(g.racks[seat], norm.map((t) => (t.b ? BLANK : t.l)));
-  const result = evaluatePlacement(g.board, norm);
+  const rules = rulesOf(g);
+  const result = evaluatePlacement(g.board, norm, rules);
   const bad = result.words.filter((w) => !opts.isWord(w.word)).map((w) => w.word);
   if (bad.length) {
     throw new MoveError(
@@ -316,7 +323,7 @@ export function applyPlay(g: GameState, seat: number, tiles: PlacedTile[], opts:
   }
 
   for (const t of norm) g.board[t.r][t.c] = t.b ? { l: t.l, b: true } : { l: t.l };
-  const drawn = g.bag.splice(0, RACK_SIZE - rackAfter.length);
+  const drawn = g.bag.splice(0, rules.rackSize - rackAfter.length);
   g.racks[seat] = [...rackAfter, ...drawn];
   g.scores[seat] += result.score;
 
@@ -341,8 +348,9 @@ export function applyPlay(g: GameState, seat: number, tiles: PlacedTile[], opts:
 export function applyExchange(g: GameState, seat: number, letters: string[], rng: Rng, now = Date.now()): Move {
   assertTurn(g, seat);
   if (letters.length === 0) throw new MoveError("Choose tiles to exchange.");
-  if (g.bag.length < RACK_SIZE) {
-    throw new MoveError(`You can only exchange when the bag has at least ${RACK_SIZE} tiles.`);
+  const { rackSize } = rulesOf(g);
+  if (g.bag.length < rackSize) {
+    throw new MoveError(`You can only exchange when the bag has at least ${rackSize} tiles.`);
   }
   const norm = letters.map((l) => (l === BLANK ? BLANK : String(l).toUpperCase()));
   const kept = takeFromRack(g.racks[seat], norm);
@@ -384,6 +392,7 @@ export function applyResign(g: GameState, seat: number, now = Date.now()): Move 
 export interface GameView {
   id: string;
   version: number;
+  variant: Variant;
   seats: { id: string; name: string; score: number; tiles: number; resigned: boolean }[];
   mySeat: number | null;
   myRack: string[];
@@ -403,6 +412,7 @@ export function viewFor(g: GameState, playerId: string, id: string, version: num
   return {
     id,
     version,
+    variant: g.variant ?? "standard",
     seats: g.seats.map((pid, i) => ({
       id: pid, name: g.names[i], score: g.scores[i], tiles: g.racks[i].length, resigned: g.resigned[i],
     })),

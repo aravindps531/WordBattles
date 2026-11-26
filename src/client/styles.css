@@ -155,9 +155,10 @@ input {
 .panel { grid-area: panel; }
 .board {
   --size: min(calc(100vw - 12px), 640px);
-  --c: calc(var(--size) / 15);
+  --n: 15;
+  --c: calc(var(--size) / var(--n));
   width: var(--size); height: var(--size);
-  display: grid; grid-template-columns: repeat(15, 1fr); grid-template-rows: repeat(15, 1fr);
+  display: grid; grid-template-columns: repeat(var(--n), 1fr); grid-template-rows: repeat(var(--n), 1fr);
   gap: 1px; background: var(--board); padding: 1px; border-radius: 6px;
   touch-action: manipulation; user-select: none; -webkit-user-select: none;
 }
@@ -192,7 +193,8 @@ input {
 .hint.bad { color: var(--bad); }
 
 .rack {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+  --rack: 7;
+  display: grid; grid-template-columns: repeat(var(--rack), 1fr); gap: 6px;
   width: min(100%, 460px); margin: 0 auto;
 }
 .rack-slot {
@@ -467,3 +469,12 @@ input {
   .sea-boards { flex-direction: row; align-items: flex-start; justify-content: center; gap: 24px; }
   .sgrid.small { --cell: calc((var(--bsize) * 0.75 - 22px) / var(--n)); }
 }
+
+/* ---------- mega word battle (21x21) */
+.cell.prem-QW { background: #8e2a17; color: #fff; }
+.cell.prem-QL { background: #1d5c66; color: #fff; }
+.mega-tag { font-size: 0.75rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 99px; }
+.zoom-btn { min-height: 36px; padding: 0 10px; }
+.board-wrap.big.zoomed { overflow: auto; max-height: 62dvh; justify-content: flex-start; -webkit-overflow-scrolling: touch; border-radius: 6px; }
+.board-wrap.big.zoomed .board { --size: calc(var(--n) * 30px); flex: none; }
+.rack-slot { --c: min(calc(88vw / var(--rack, 7)), 60px); }

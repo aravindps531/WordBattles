@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { BLANK, BOARD_SIZE, CENTER, PREMIUMS, RACK_SIZE, TILE_POINTS } from "../shared/constants";
+import { BLANK, rulesFor, TILE_POINTS } from "../shared/constants";
 import type { Dictionary } from "../shared/dictionary";
 import { evaluatePlacement, MoveError, type GameView, type Move, type PlacedTile } from "../shared/engine";
 import { Api, ApiError } from "./api";
@@ -13,7 +13,7 @@ interface Cursor { r: number; c: number; down: boolean }
 
 let nextId = 1;
 const POLL_MS = 15000;
-const PREMIUM_LABEL = { TW: "3W", DW: "2W", TL: "3L", DL: "2L" } as const;
+const PREMIUM_LABEL = { QW: "4W", TW: "3W", DW: "2W", QL: "4L", TL: "3L", DL: "2L" } as const;
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 function rebuildRack(rack: string[], pending: Pending[], view: GameView) {
@@ -66,6 +66,23 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [dict, setDict] = useState<Dictionary | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const rules = rulesFor(view?.variant);
+  // Big boards are hard to read on phones: start zoomed in there (scroll to move around).
+  const [zoomed, setZoomed] = useState(() => window.innerWidth < 700);
+  const boardWrapRef = useRef<HTMLDivElement>(null);
+  // When zoomed, centre the view on the latest word (or the centre star), once per new move.
+  useEffect(() => {
+    const wrap = boardWrapRef.current;
+    if (!wrap || !view || rules.size <= 15 || !zoomed) return;
+    let tiles: { r: number; c: number }[] = [];
+    for (let i = view.moves.length - 1; i >= 0 && !tiles.length; i--) tiles = view.moves[i].tiles ?? [];
+    const rs = tiles.length ? tiles.map((t) => t.r) : [rules.center];
+    const cs = tiles.length ? tiles.map((t) => t.c) : [rules.center];
+    const cell = wrap.scrollWidth / rules.size;
+    const r = (Math.min(...rs) + Math.max(...rs) + 1) / 2;
+    const c = (Math.min(...cs) + Math.max(...cs) + 1) / 2;
+    wrap.scrollTo({ left: c * cell - wrap.clientWidth / 2, top: r * cell - wrap.clientHeight / 2 });
+  }, [view?.version, zoomed, rules.size]);
   const [chatOpen, setChatOpen] = useState(() => new URLSearchParams(location.search).has("chat"));
   const versionRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef(pending);
@@ -133,7 +150,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
     if (!view || pending.length === 0) return null;
     const tiles: PlacedTile[] = pending.map((p) => ({ r: p.r, c: p.c, l: p.l, b: p.item.t === BLANK }));
     try {
-      const res = evaluatePlacement(view.board, tiles);
+      const res = evaluatePlacement(view.board, tiles, rules);
       const invalid = dict ? [...new Set(res.words.filter((w) => !dict.has(w.word)).map((w) => w.word))] : [];
       return { ok: invalid.length === 0, res, invalid, tiles, error: null as string | null };
     } catch (e) {
@@ -142,13 +159,13 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
   }, [view, pending, dict]);
 
   const isFree = (r: number, c: number) =>
-    r >= 0 && c >= 0 && r < BOARD_SIZE && c < BOARD_SIZE && !view!.board[r][c] && !pendingAt.has(`${r},${c}`);
+    r >= 0 && c >= 0 && r < rules.size && c < rules.size && !view!.board[r][c] && !pendingAt.has(`${r},${c}`);
 
   const advanceCursor = (cur: Cursor, extraTaken?: string): Cursor | null => {
     let { r, c } = cur;
     for (;;) {
       if (cur.down) r++; else c++;
-      if (r >= BOARD_SIZE || c >= BOARD_SIZE) return null;
+      if (r >= rules.size || c >= rules.size) return null;
       if (isFree(r, c) && `${r},${c}` !== extraTaken) return { ...cur, r, c };
     }
   };
@@ -283,7 +300,13 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
       <header class="game-top">
         <a class="back" href={`/p/${token}`} aria-label="All games">&larr; Games</a>
         <span class="top-right">
+          {rules.variant === "mega" && <span class="mega-tag">Mega</span>}
           <span class="bag" title="Tiles left in the bag">Bag: <b>{view.bagCount}</b></span>
+          {rules.size > 15 && (
+            <button class="btn zoom-btn" onClick={() => setZoomed((z) => !z)} aria-pressed={zoomed}>
+              {zoomed ? "Fit" : "Zoom"}
+            </button>
+          )}
           <HowToButton onClick={howTo.show} />
           <button class="btn chat-btn" onClick={() => setChatOpen(true)}
             aria-label={chat.unread ? `Chat, ${chat.unread} unread` : "Chat"}>
@@ -317,17 +340,17 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
         })}
       </ol>
 
-        <div class="board-wrap">
-          <div class="board" role="grid" aria-label="Game board">
+        <div ref={boardWrapRef} class={`board-wrap ${rules.size > 15 ? "big" : ""} ${rules.size > 15 && zoomed ? "zoomed" : ""}`}>
+          <div class="board" role="grid" aria-label="Game board" style={{ "--n": rules.size }}>
             {view.board.map((rowCells, r) => rowCells.map((cell, c) => {
               const key = `${r},${c}`;
               const p = pendingAt.get(key);
-              const prem = PREMIUMS[r][c];
+              const prem = rules.premiums[r][c];
               const isCursor = cursor && cursor.r === r && cursor.c === c && !p && !cell;
               const cls = [
                 "cell",
                 prem ? `prem-${prem}` : "",
-                r === CENTER && c === CENTER ? "center" : "",
+                r === rules.center && c === rules.center ? "center" : "",
                 cell ? "has-tile" : "",
                 p ? "has-pending" : "",
                 cell && lastTiles.has(key) ? "last" : "",
@@ -342,7 +365,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
                   ) : isCursor ? (
                     <span class="arrow">{cursor!.down ? "▼" : "▶"}</span>
                   ) : prem ? (
-                    <span class="prem-label">{r === CENTER && c === CENTER ? "★" : PREMIUM_LABEL[prem]}</span>
+                    <span class="prem-label">{r === rules.center && c === rules.center ? "★" : PREMIUM_LABEL[prem]}</span>
                   ) : null}
                 </button>
               );
@@ -354,7 +377,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
           {view.status === "active" && mySeat !== null && (
             <>
               <PreviewLine preview={preview} myTurn={myTurn} swapMode={swapMode} swapCount={swapSel.size} hasCursor={!!cursor} />
-              <div class={`rack ${swapMode ? "swapping" : ""}`} aria-label="Your tiles">
+              <div class={`rack ${swapMode ? "swapping" : ""}`} aria-label="Your tiles" style={{ "--rack": rules.rackSize }}>
                 {rack.map((item) => {
                   const used = pending.some((p) => p.item.id === item.id);
                   return (
@@ -369,7 +392,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
                     </button>
                   );
                 })}
-                {Array.from({ length: Math.max(0, RACK_SIZE - rack.length) }, (_, i) => (
+                {Array.from({ length: Math.max(0, rules.rackSize - rack.length) }, (_, i) => (
                   <span key={`e${i}`} class="rack-slot empty" />
                 ))}
               </div>
@@ -387,8 +410,8 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
                 <div class="actions">
                   <button class="btn" onClick={shuffleRack} title="Shuffle your tiles">Shuffle</button>
                   <button class="btn" onClick={recall} disabled={pending.length === 0}>Recall</button>
-                  <button class="btn" disabled={!myTurn || busy || view.bagCount < RACK_SIZE}
-                    title={view.bagCount < RACK_SIZE ? "Fewer than 7 tiles left in the bag" : "Swap tiles"}
+                  <button class="btn" disabled={!myTurn || busy || view.bagCount < rules.rackSize}
+                    title={view.bagCount < rules.rackSize ? `Fewer than ${rules.rackSize} tiles left in the bag` : "Swap tiles"}
                     onClick={() => { recall(); setSwapMode(true); }}>Swap</button>
                   <button class="btn" disabled={!myTurn || busy}
                     onClick={() => { if (confirm("Pass your turn without playing?")) submit("pass"); }}>Pass</button>

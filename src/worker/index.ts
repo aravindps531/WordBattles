@@ -227,6 +227,7 @@ function summary(row: GameRow, playerId: string) {
   return {
     id: row.id,
     kind: "words" as const,
+    variant: g.variant ?? "standard",
     status: g.status,
     updatedAt: row.updated_at,
     players: g.seats.map((id, i) => ({ id, name: g.names[i], score: g.scores[i], resigned: g.resigned[i] })),
@@ -328,14 +329,15 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
   }
 
   if (path === "/api/games" && method === "POST") {
-    const { playerIds } = await body<{ playerIds?: string[] }>(req);
+    const { playerIds, variant } = await body<{ playerIds?: string[]; variant?: string }>(req);
+    const v = variant === "mega" ? "mega" : "standard";
     const ids = [...new Set([me.id, ...(playerIds ?? [])])];
     if (ids.length < 2 || ids.length > 4) throw new HttpError(400, "Pick 1 to 3 other players.");
     const marks = ids.map(() => "?").join(",");
     const { results: players } = await env.DB.prepare(`SELECT id, name FROM players WHERE id IN (${marks})`)
       .bind(...ids).all<{ id: string; name: string }>();
     if (players.length !== ids.length) throw new HttpError(400, "Unknown player.");
-    const g = createGame(players, rng);
+    const g = createGame(players, rng, v);
     const id = randomId(8);
     const now = Date.now();
     await env.DB.batch([
@@ -345,7 +347,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
         env.DB.prepare("INSERT INTO game_players (game_id, player_id, seat) VALUES (?, ?, ?)").bind(id, pid, seat)),
     ]);
     ctx.waitUntil(notify(env, origin, g.seats.filter((p) => p !== me.id), (p) => ({
-      title: `New game ${gameLabel(g, p.id)}`,
+      title: `New ${v === "mega" ? "Mega Word Battle" : "game"} ${gameLabel(g, p.id)}`,
       body: g.seats[g.turn] === p.id
         ? `${me.name} started a game. You go first!`
         : `${me.name} started a game. ${g.names[g.turn]} goes first.`,
