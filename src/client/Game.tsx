@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { BLANK, rulesFor, TILE_POINTS } from "../shared/constants";
 import type { Dictionary } from "../shared/dictionary";
 import { evaluatePlacement, MoveError, type GameView, type Move, type PlacedTile } from "../shared/engine";
-import { Api, ApiError } from "./api";
+import { Api, ApiError, type LiveTry } from "./api";
 import { ChatPanel, useChat } from "./Chat";
 import { HowToButton, HowToPanel, useHowTo, WordsHowTo } from "./HowTo";
 import { loadDictionary } from "./words";
@@ -15,6 +15,8 @@ let nextId = 1;
 const POLL_MS = 15000;
 const PREMIUM_LABEL = { QW: "4W", TW: "3W", DW: "2W", QL: "4L", TL: "3L", DL: "2L" } as const;
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const TRY_POLL_MS = 3000;
+const TRY_SEND_DELAY_MS = 600;
 
 function rebuildRack(rack: string[], pending: Pending[], view: GameView) {
   const items = rack.map((t) => ({ id: nextId++, t }));
@@ -132,6 +134,57 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
   const myTurn = !!view && view.status === "active" && view.turn === mySeat;
   const meId = view && mySeat !== null ? view.seats[mySeat].id : null;
   const chat = useChat(api, gameId, meId, chatOpen);
+
+  // ---- live tries: share mine, show everyone else's (game-level setting)
+  const liveOn = !!view && view.liveTries && view.status === "active";
+  const [tries, setTries] = useState<LiveTry[]>([]);
+  const lastSent = useRef("[]");
+  const sendTry = useCallback((tiles: { r: number; c: number; l: string; b?: boolean }[], keepalive = false) => {
+    const json = JSON.stringify(tiles);
+    if (json === lastSent.current) return;
+    lastSent.current = json;
+    api.saveDraft(gameId, tiles, keepalive).catch(() => { lastSent.current = ""; });
+  }, [api, gameId]);
+  useEffect(() => {
+    if (!liveOn || mySeat === null) return;
+    const tiles = pending.map((p) => ({ r: p.r, c: p.c, l: p.l, ...(p.item.t === BLANK ? { b: true } : {}) }));
+    const t = setTimeout(() => sendTry(tiles), TRY_SEND_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [pending, liveOn, mySeat, sendTry]);
+  useEffect(() => {
+    if (!liveOn || mySeat === null) return;
+    const clear = () => { if (document.visibilityState === "hidden") sendTry([], true); };
+    document.addEventListener("visibilitychange", clear);
+    return () => { document.removeEventListener("visibilitychange", clear); sendTry([], true); };
+  }, [liveOn, mySeat, sendTry]);
+  useEffect(() => {
+    if (!liveOn) { setTries([]); return; }
+    let stop = false;
+    const load = () => {
+      if (document.visibilityState !== "visible") return;
+      api.drafts(gameId).then((r) => { if (!stop) setTries(r.drafts); }).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, TRY_POLL_MS);
+    return () => { stop = true; clearInterval(t); };
+  }, [liveOn, api, gameId, view?.version]);
+  const tryColor = (playerId: string) => Math.max(0, view?.seats.findIndex((s) => s.id === playerId) ?? 0) % 4;
+  const tryAt = useMemo(() => {
+    const m = new Map<string, { l: string; b?: boolean; name: string; color: number; more: number }>();
+    for (const t of tries) {
+      for (const tile of t.tiles) {
+        const key = `${tile.r},${tile.c}`;
+        const prev = m.get(key);
+        if (prev) prev.more++;
+        else m.set(key, { l: tile.l, b: tile.b, name: t.name, color: tryColor(t.playerId), more: 0 });
+      }
+    }
+    return m;
+  }, [tries, view?.seats]);
+  const toggleLiveTries = async (on: boolean) => {
+    if (!on && !confirm("Turn off live tries for everyone in this game? Only you will be able to turn them back on.")) return;
+    try { applyView(await api.setLiveTries(gameId, on)); } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); }
+  };
   const howTo = useHowTo("words");
   const lastMove = view?.moves[view.moves.length - 1];
   const lastPlay = useMemo(() => {
@@ -348,6 +401,7 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
               const p = pendingAt.get(key);
               const prem = rules.premiums[r][c];
               const isCursor = cursor && cursor.r === r && cursor.c === c && !p && !cell;
+              const ghost = !cell && !p ? tryAt.get(key) : undefined;
               const cls = [
                 "cell",
                 prem ? `prem-${prem}` : "",
@@ -363,6 +417,11 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
                     <Tile letter={cell.l} blank={!!cell.b} />
                   ) : p ? (
                     <Tile letter={p.l} blank={p.item.t === BLANK} pending />
+                  ) : ghost ? (
+                    <span class={`ghost ghost-${ghost.color}`} title={`${ghost.name} is trying ${ghost.l}${ghost.more ? ` (+${ghost.more} more)` : ""}`}>
+                      <Tile letter={ghost.l} blank={!!ghost.b} />
+                      <i class="ghost-who">{ghost.name[0]}</i>
+                    </span>
                   ) : isCursor ? (
                     <span class="arrow">{cursor!.down ? "▼" : "▶"}</span>
                   ) : prem ? (
@@ -424,6 +483,26 @@ export function GamePage({ api, token, gameId }: { api: Api; token: string; game
             </>
           )}
 
+          {view.status === "active" && (
+            <div class="live-tries">
+              {liveOn ? (
+                <>
+                  <span class="muted small">
+                    Live tries on{tries.filter((t) => t.tiles.length).length > 0 ? ": " : "."}
+                    {tries.filter((t) => t.tiles.length).map((t) => (
+                      <span key={t.playerId} class={`try-chip ghost-${tryColor(t.playerId)}`}>{t.name} is trying</span>
+                    ))}
+                  </span>
+                  {mySeat !== null && <button class="link-btn small" onClick={() => toggleLiveTries(false)}>Turn off</button>}
+                </>
+              ) : (
+                <>
+                  <span class="muted small">Live tries off{view.liveTriesOffBy ? ` (turned off by ${view.liveTriesOffBy})` : ""}.</span>
+                  {view.canEnableLiveTries && <button class="link-btn small" onClick={() => toggleLiveTries(true)}>Turn back on</button>}
+                </>
+              )}
+            </div>
+          )}
           {lastMove && (
             <p class="last-move">
               <span class="swatch" aria-hidden="true" /> Last move: {moveText(view, lastMove, mySeat)}

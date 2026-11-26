@@ -34,6 +34,9 @@ export interface EndSummary {
 export interface GameState {
   v: 1;
   variant?: Variant;        // absent = standard (games created before Mega existed)
+  /** Live tries: everyone sees tiles being arranged before they're played. Absent = on. */
+  liveTries?: boolean;
+  liveTriesOffBy?: string;  // player id who switched it off
   seats: string[];          // player ids, in turn order
   names: string[];          // display names, by seat
   board: Board;
@@ -393,6 +396,9 @@ export interface GameView {
   id: string;
   version: number;
   variant: Variant;
+  liveTries: boolean;
+  liveTriesOffBy: string | null;   // name of the player who switched it off
+  canEnableLiveTries: boolean;     // only whoever switched it off can turn it back on
   seats: { id: string; name: string; score: number; tiles: number; resigned: boolean }[];
   mySeat: number | null;
   myRack: string[];
@@ -413,6 +419,9 @@ export function viewFor(g: GameState, playerId: string, id: string, version: num
     id,
     version,
     variant: g.variant ?? "standard",
+    liveTries: g.liveTries !== false,
+    liveTriesOffBy: g.liveTriesOffBy ? g.names[g.seats.indexOf(g.liveTriesOffBy)] ?? null : null,
+    canEnableLiveTries: g.liveTries === false && g.liveTriesOffBy === playerId,
     seats: g.seats.map((pid, i) => ({
       id: pid, name: g.names[i], score: g.scores[i], tiles: g.racks[i].length, resigned: g.resigned[i],
     })),

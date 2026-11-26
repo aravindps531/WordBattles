@@ -486,3 +486,22 @@ input {
 .game-card.watch { background: #f4f7fb; }
 .family-section summary { cursor: pointer; list-style: none; }
 .family-section summary::-webkit-details-marker { display: none; }
+
+/* ---------- live tries */
+.ghost { position: relative; width: 100%; height: 100%; display: block; opacity: 0.6; }
+.ghost .tile { background: #fff; border: 2px dashed currentColor; box-shadow: none; }
+.ghost-who {
+  position: absolute; top: -2px; left: -2px; font-style: normal; font-weight: 800; font-size: calc(var(--c) * 0.28);
+  background: currentColor; border-radius: 3px; padding: 0 2px; line-height: 1.2;
+}
+.ghost-who { color: #fff; }
+.ghost.ghost-0 { color: #2f5d8a; } .ghost.ghost-0 .ghost-who { background: #2f5d8a; }
+.ghost.ghost-1 { color: #8a2f6d; } .ghost.ghost-1 .ghost-who { background: #8a2f6d; }
+.ghost.ghost-2 { color: #2f7a3b; } .ghost.ghost-2 .ghost-who { background: #2f7a3b; }
+.ghost.ghost-3 { color: #8a5a10; } .ghost.ghost-3 .ghost-who { background: #8a5a10; }
+.ghost .tile .l, .ghost .tile .pts { color: var(--ink); }
+.live-tries { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.try-chip { display: inline-block; margin: 0 4px; padding: 1px 8px; border-radius: 99px; color: #fff; font-weight: 700; }
+.try-chip.ghost-0 { background: #2f5d8a; } .try-chip.ghost-1 { background: #8a2f6d; }
+.try-chip.ghost-2 { background: #2f7a3b; } .try-chip.ghost-3 { background: #8a5a10; }
+.link-btn.small { font-size: 0.85rem; }

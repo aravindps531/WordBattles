@@ -383,7 +383,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
   }
 
   if (path === "/api/games" && method === "POST") {
-    const { playerIds, variant } = await body<{ playerIds?: string[]; variant?: string }>(req);
+    const { playerIds, variant, liveTries } = await body<{ playerIds?: string[]; variant?: string; liveTries?: boolean }>(req);
     const v = variant === "mega" ? "mega" : "standard";
     const ids = [...new Set([me.id, ...(playerIds ?? [])])];
     if (ids.length < 2 || ids.length > 4) throw new HttpError(400, "Pick 1 to 3 other players.");
@@ -392,6 +392,7 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
       .bind(...ids).all<{ id: string; name: string }>();
     if (players.length !== ids.length) throw new HttpError(400, "Unknown player.");
     const g = createGame(players, rng, v);
+    if (liveTries === false) g.liveTries = false;
     const id = randomId(8);
     const now = Date.now();
     await env.DB.batch([
@@ -456,6 +457,8 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
       "UPDATE games SET state = ?, version = version + 1, status = ?, updated_at = ? WHERE id = ? AND version = ?",
     ).bind(JSON.stringify(g), g.status, now, row.id, row.version).run();
     if (!res.meta.changes) throw new HttpError(409, "Someone else moved at the same time. Refreshing...");
+    // Their move is made, so their live try is gone.
+    ctx.waitUntil(env.DB.prepare("DELETE FROM drafts WHERE game_id = ? AND player_id = ?").bind(row.id, me.id).run());
 
     const text = describeMove(g, move);
     if (g.status === "finished") {
@@ -477,6 +480,30 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
     }
     return json(viewFor(g, me.id, row.id, row.version + 1));
   }
+
+  m = /^\/api\/games\/([\w-]+)\/live-tries$/.exec(path);
+  if (m && method === "POST") {
+    // Any player can switch live tries off for the whole game; only that player can switch it back on.
+    const { on } = await body<{ on?: boolean }>(req);
+    const row = await loadGame(env, m[1]);
+    const g = JSON.parse(row.state) as GameState;
+    if ((g as unknown as { kind?: string }).kind || !g.seats.includes(me.id)) throw new HttpError(403, "You are not in this game.");
+    if (on) {
+      if (g.liveTries !== false) return json(viewFor(g, me.id, row.id, row.version));
+      if (g.liveTriesOffBy !== me.id) throw new HttpError(403, "Only the player who switched live tries off can switch them back on.");
+      delete g.liveTries; delete g.liveTriesOffBy;
+    } else {
+      g.liveTries = false; g.liveTriesOffBy = me.id;
+    }
+    const res = await env.DB.prepare("UPDATE games SET state = ?, version = version + 1 WHERE id = ? AND version = ?")
+      .bind(JSON.stringify(g), row.id, row.version).run();
+    if (!res.meta.changes) throw new HttpError(409, "The game changed at the same time. Please try again.");
+    if (!on) await env.DB.prepare("DELETE FROM drafts WHERE game_id = ?").bind(row.id).run();
+    return json(viewFor(g, me.id, row.id, row.version + 1));
+  }
+
+  m = /^\/api\/games\/([\w-]+)\/drafts?$/.exec(path);
+  if (m) return handleDrafts(req, env, me, m[1], path.endsWith("/draft"));
 
   m = /^\/api\/games\/([\w-]+)\/chat(\/read)?$/.exec(path);
   if (m) return handleChat(req, env, ctx, url, me, m[1], !!m[2]);
@@ -517,6 +544,56 @@ async function handleApi(req: Request, env: Env, ctx: ExecutionContext, url: URL
   }
 
   throw new HttpError(404, "Not found.");
+}
+
+// ------------------------------------------------------------------ live tries (word games)
+
+const DRAFT_TTL_MS = 3 * 60 * 1000;
+
+async function handleDrafts(req: Request, env: Env, me: Player, gameId: string, isSave: boolean): Promise<Response> {
+  // GET /drafts: anyone in the family can see live tries (players and watchers), except their own.
+  if (!isSave && req.method === "GET") {
+    const st = await env.DB.prepare("SELECT state FROM games WHERE id = ?").bind(gameId).first<{ state: string }>();
+    if (!st || (JSON.parse(st.state) as GameState).liveTries === false) return json({ drafts: [] });
+    const { results } = await env.DB.prepare(
+      `SELECT d.player_id, p.name, d.tiles, d.updated_at FROM drafts d JOIN players p ON p.id = d.player_id
+        WHERE d.game_id = ? AND d.player_id != ? AND d.updated_at > ?`,
+    ).bind(gameId, me.id, Date.now() - DRAFT_TTL_MS).all<{ player_id: string; name: string; tiles: string; updated_at: number }>();
+    return json({ drafts: results.map((r) => ({ playerId: r.player_id, name: r.name, tiles: JSON.parse(r.tiles), at: r.updated_at })) });
+  }
+  // POST /draft: save (or clear) my own try. Only players in this word game, and only tiles from my rack.
+  if (isSave && req.method === "POST") {
+    const { tiles } = await body<{ tiles?: { r: number; c: number; l: string; b?: boolean }[] }>(req);
+    const list = Array.isArray(tiles) ? tiles : [];
+    if (list.length === 0) {
+      await env.DB.prepare("DELETE FROM drafts WHERE game_id = ? AND player_id = ?").bind(gameId, me.id).run();
+      return json({ ok: true });
+    }
+    const row = await loadGame(env, gameId);
+    const g = JSON.parse(row.state) as GameState;
+    if ((g as unknown as { kind?: string }).kind) throw new HttpError(400, "Live tries are only for word games.");
+    const seat = g.seats.indexOf(me.id);
+    if (seat < 0) throw new HttpError(403, "You are not in this game.");
+    if (g.status !== "active" || g.liveTries === false) return json({ ok: true });
+    const size = g.board.length;
+    const rack = [...g.racks[seat]];
+    const clean: { r: number; c: number; l: string; b?: true }[] = [];
+    for (const t of list.slice(0, rack.length)) {
+      const r = Number(t.r), c = Number(t.c), l = String(t.l ?? "").toUpperCase();
+      if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0 || r >= size || c >= size) continue;
+      if (!/^[A-Z]$/.test(l) || g.board[r][c]) continue;
+      const i = rack.indexOf(t.b ? "?" : l);
+      if (i < 0) continue; // only letters actually on my rack
+      rack.splice(i, 1);
+      clean.push(t.b ? { r, c, l, b: true } : { r, c, l });
+    }
+    await env.DB.prepare(
+      `INSERT INTO drafts (game_id, player_id, tiles, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(game_id, player_id) DO UPDATE SET tiles = excluded.tiles, updated_at = excluded.updated_at`,
+    ).bind(gameId, me.id, JSON.stringify(clean), Date.now()).run();
+    return json({ ok: true });
+  }
+  throw new HttpError(405, "Method not allowed.");
 }
 
 // ------------------------------------------------------------------ chat

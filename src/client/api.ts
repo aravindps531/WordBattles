@@ -76,6 +76,8 @@ export interface SeaSummary {
 
 export type AnySummary = (GameSummary | ChessSummary | GoSummary | SeaSummary) & { unreadChat?: number };
 
+export interface LiveTry { playerId: string; name: string; tiles: { r: number; c: number; l: string; b?: boolean }[]; at: number }
+
 export interface ChatMessage { id: number; playerId: string; name: string; body: string; at: number }
 
 export interface WatchSummary {
@@ -134,8 +136,11 @@ export class Api {
       `/api/games/${id}${since !== undefined ? `?since=${since}` : ""}`,
     );
   }
-  createGame(playerIds: string[], variant: "standard" | "mega" = "standard") {
-    return this.req<{ id: string }>("/api/games", { method: "POST", body: JSON.stringify({ playerIds, variant }) });
+  createGame(playerIds: string[], variant: "standard" | "mega" = "standard", liveTries = true) {
+    return this.req<{ id: string }>("/api/games", { method: "POST", body: JSON.stringify({ playerIds, variant, liveTries }) });
+  }
+  setLiveTries(gameId: string, on: boolean) {
+    return this.req<GameView>(`/api/games/${gameId}/live-tries`, { method: "POST", body: JSON.stringify({ on }) });
   }
   move(id: string, version: number, action: "play" | "pass" | "exchange" | "resign",
     extra: { tiles?: PlacedTile[]; letters?: string[] } = {}) {
@@ -173,6 +178,12 @@ export class Api {
   }
   seaAction(id: string, version: number, action: "place" | "fire" | "resign", extra: { fleet?: Ship[]; points?: number[] } = {}) {
     return this.req<SeaView>(`/api/sea/${id}/action`, { method: "POST", body: JSON.stringify({ version, action, ...extra }) });
+  }
+  drafts(gameId: string) {
+    return this.req<{ drafts: LiveTry[] }>(`/api/games/${gameId}/drafts`);
+  }
+  saveDraft(gameId: string, tiles: { r: number; c: number; l: string; b?: boolean }[], keepalive = false) {
+    return this.req<{ ok: true }>(`/api/games/${gameId}/draft`, { method: "POST", body: JSON.stringify({ tiles }), keepalive });
   }
   chatMessages(gameId: string, after = 0) {
     return this.req<{ messages: ChatMessage[]; lastReadId: number }>(`/api/games/${gameId}/chat?after=${after}`);

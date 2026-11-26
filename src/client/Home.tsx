@@ -73,6 +73,7 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
   const [kind, setKind] = useState<"words" | "chess" | "go" | "sea">("words");
   const [seaSize, setSeaSize] = useState<8 | 10>(10);
   const [wordVariant, setWordVariant] = useState<"standard" | "mega">("standard");
+  const [liveTries, setLiveTries] = useState(true);
   const [seaCpu, setSeaCpu] = useState<"easy" | "smart">("easy");
   const [goSize, setGoSize] = useState<9 | 13>(9);
   const [handicap, setHandicap] = useState(0);
@@ -86,7 +87,7 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
   const startWords = async () => {
     setCreating(true);
     try {
-      const { id } = await api.createGame([...picking], wordVariant);
+      const { id } = await api.createGame([...picking], wordVariant, liveTries);
       location.href = `/p/${token}/g/${id}`;
     } catch (e) { alert((e as Error).message); setCreating(false); }
   };
@@ -144,6 +145,10 @@ function NewGame({ api, token, family }: { api: Api; token: string; family: { id
             {wordVariant === "mega" && (
               <p class="muted small">Mega: 225 tiles, 8-tile racks, quadruple squares. Games run about twice as long; best for 3 to 4 players and on tablets.</p>
             )}
+            <label class="setting">
+              <input type="checkbox" checked={liveTries} onChange={(e) => setLiveTries((e.target as HTMLInputElement).checked)} />
+              Show everyone's tries live (others see tiles you're arranging, so they learn some of your letters)
+            </label>
             <p class="muted small">Pick 1 to 3 people. The starting order is drawn at random.</p>
             <div class="pick">
               {family.map((p) => (

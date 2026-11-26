@@ -16,6 +16,7 @@ Every family member can watch games they aren't playing in ("Family games to wat
 - **Push notifications** when it's your turn; the board shows who is playing now and who is next, and highlights the last word played.
 - Any number of games can run at once. No time limits.
 - Works on phones and tablets; can be added to the home screen as an app.
+- **Live tries** (game setting, on by default): everyone, including watchers, sees the tiles a player is arranging before they play them, as dashed tiles labelled with the player's initial. Any player can turn it off for the whole game; only they can turn it back on.
 - **Mega Word Battle** option: 21x21 board with quadruple letter/word squares, 225 tiles (5 blanks), 8-tile racks, 50 points for using all 8. Phones open zoomed in on the latest word; Fit/Zoom toggles the view.
 - **In-game chat** with emoji (Word Battles and Chess games between people): each game has its own chat, with unread badges and a notification for new messages.
 
